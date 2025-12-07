@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Code Hub{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <style>
+        .markdown-body {
+            font-size: 16px;
+            line-height: 1.7;
+        }
+        .markdown-body h1 { font-size: 2em; font-weight: bold; margin: 1em 0 0.5em; border-bottom: 1px solid #374151; padding-bottom: 0.3em; }
+        .markdown-body h2 { font-size: 1.5em; font-weight: bold; margin: 1em 0 0.5em; border-bottom: 1px solid #374151; padding-bottom: 0.3em; }
+        .markdown-body h3 { font-size: 1.25em; font-weight: bold; margin: 1em 0 0.5em; }
+        .markdown-body p { margin: 0.5em 0; }
+        .markdown-body ul, .markdown-body ol { margin: 0.5em 0; padding-left: 2em; }
+        .markdown-body li { margin: 0.25em 0; }
+        .markdown-body pre {
+            background: #1e1e1e;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            margin: 1em 0;
+        }
+        .markdown-body code {
+            background: #374151;
+            padding: 0.2rem 0.4rem;
+            border-radius: 0.25rem;
+            font-size: 0.9em;
+        }
+        .markdown-body pre code {
+            background: transparent;
+            padding: 0;
+        }
+        .markdown-body a {
+            color: #60a5fa;
+            text-decoration: underline;
+        }
+        .markdown-body blockquote {
+            border-left: 4px solid #4b5563;
+            padding-left: 1em;
+            margin: 1em 0;
+            color: #9ca3af;
+        }
+        .markdown-body table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1em 0;
+        }
+        .markdown-body th, .markdown-body td {
+            border: 1px solid #374151;
+            padding: 0.5em;
+        }
+        .markdown-body th {
+            background: #1f2937;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+    <nav class="bg-gray-800 border-b border-gray-700 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 py-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-8">
+                    <a href="/" class="text-xl font-bold text-white hover:text-blue-400">Code Hub</a>
+                    <a href="/browse" class="text-gray-300 hover:text-white">Browse</a>
+                </div>
+                {% block header_search %}
+                <div class="flex items-center space-x-4">
+                    <form action="/search" method="get" class="flex">
+                        <input type="text" name="q" placeholder="Search projects..."
+                               value="{{ query if query else '' }}"
+                               class="bg-gray-700 text-white px-4 py-2 rounded-l-lg w-64 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-gray-600">
+                        <button type="submit" class="bg-blue-600 px-4 py-2 rounded-r-lg hover:bg-blue-700 border border-blue-600">
+                            Search
+                        </button>
+                    </form>
+                </div>
+                {% endblock %}
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-4 py-8">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="border-t border-gray-700 mt-16">
+        <div class="max-w-7xl mx-auto px-4 py-6 text-center text-gray-500 text-sm">
+            Code Hub - Your personal code project manager
+        </div>
+    </footer>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script>hljs.highlightAll();</script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} - Files - Code Hub{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="mb-6">
+    <div class="flex items-center gap-2 text-sm text-gray-400 mb-2">
+        <a href="/" class="hover:text-white">Home</a>
+        <span>/</span>
+        <a href="/browse" class="hover:text-white">Projects</a>
+        <span>/</span>
+        <a href="/project/{{ project.name }}" class="hover:text-white">{{ project.name }}</a>
+        <span>/</span>
+        <span class="text-gray-300">Files</span>
+    </div>
+
+    <div class="flex items-center justify-between">
+        <h1 class="text-2xl font-bold">{{ project.name }}</h1>
+        <a href="/project/{{ project.name }}"
+           class="text-gray-400 hover:text-white text-sm flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+            </svg>
+            Back to project
+        </a>
+    </div>
+</div>
+
+<!-- Breadcrumb Path -->
+<div class="bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 mb-4 flex items-center gap-2 overflow-x-auto">
+    <svg class="w-5 h-5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+    </svg>
+    {% for crumb in breadcrumbs %}
+        {% if not loop.first %}
+        <span class="text-gray-500">/</span>
+        {% endif %}
+        {% if loop.last %}
+        <span class="text-white font-medium">{{ crumb.name }}</span>
+        {% else %}
+        <a href="/project/{{ project.name }}/files{% if crumb.path %}/{{ crumb.path }}{% endif %}"
+           class="text-blue-400 hover:text-blue-300">{{ crumb.name }}</a>
+        {% endif %}
+    {% endfor %}
+</div>
+
+<!-- File List -->
+<div class="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+    <table class="w-full">
+        <thead class="bg-gray-900/50 border-b border-gray-700">
+            <tr>
+                <th class="text-left py-3 px-4 font-medium text-gray-300 w-1/2">Name</th>
+                <th class="text-left py-3 px-4 font-medium text-gray-300 hidden md:table-cell">Last Modified</th>
+                <th class="text-right py-3 px-4 font-medium text-gray-300 w-24">Size</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-700">
+            {% if current_dir %}
+            <!-- Parent directory link -->
+            <tr class="hover:bg-gray-700/50">
+                <td class="py-3 px-4" colspan="3">
+                    {% set parent_path = '/'.join(current_dir.split('/')[:-1]) %}
+                    <a href="/project/{{ project.name }}/files{% if parent_path %}/{{ parent_path }}{% endif %}"
+                       class="flex items-center gap-3 text-blue-400 hover:text-blue-300">
+                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 17l-5-5m0 0l5-5m-5 5h12"></path>
+                        </svg>
+                        ..
+                    </a>
+                </td>
+            </tr>
+            {% endif %}
+
+            {% for file in files %}
+            <tr class="hover:bg-gray-700/50">
+                <td class="py-3 px-4">
+                    {% if file.is_directory %}
+                    <a href="/project/{{ project.name }}/files/{{ file.path }}"
+                       class="flex items-center gap-3 text-blue-400 hover:text-blue-300">
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                        {{ file.name }}
+                    </a>
+                    {% else %}
+                    <a href="/project/{{ project.name }}/view/{{ file.path }}"
+                       class="flex items-center gap-3 text-gray-200 hover:text-white">
+                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        {{ file.name }}
+                        {% if file.language %}
+                        <span class="text-xs bg-gray-700 text-gray-400 px-2 py-0.5 rounded">{{ file.language }}</span>
+                        {% endif %}
+                    </a>
+                    {% endif %}
+                </td>
+                <td class="py-3 px-4 text-gray-400 text-sm hidden md:table-cell">
+                    {% if file.modified_at %}
+                    {{ file.modified_at[:10] }}
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+                <td class="py-3 px-4 text-gray-400 text-sm text-right">
+                    {% if file.is_directory %}
+                    -
+                    {% else %}
+                    {{ format_file_size(file.size_bytes) }}
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td class="py-8 px-4 text-center text-gray-500" colspan="3">
+                    No files found in this directory
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- File count -->
+<div class="mt-4 text-sm text-gray-500">
+    {% set file_count = files|selectattr('is_directory', 'false')|list|length %}
+    {% set dir_count = files|selectattr('is_directory', 'true')|list|length %}
+    {{ dir_count }} director{{ 'ies' if dir_count != 1 else 'y' }},
+    {{ file_count }} file{{ 's' if file_count != 1 else '' }}
+</div>
+{% endblock %}

@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}Search{% if query %}: {{ query }}{% endif %} - Code Hub{% endblock %}
+
+{% block content %}
+<div class="mb-8">
+    <h1 class="text-2xl font-bold mb-4">Search Projects</h1>
+
+    <form action="/search" method="get" class="flex gap-4 items-end">
+        <div class="flex-1">
+            <input type="text" name="q" value="{{ query }}" placeholder="Search for projects..."
+                   class="w-full bg-gray-800 text-white px-4 py-3 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+        </div>
+        <div>
+            <select name="mode" class="bg-gray-800 text-white px-4 py-3 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="hybrid" {% if mode == 'hybrid' %}selected{% endif %}>Hybrid Search</option>
+                <option value="semantic" {% if mode == 'semantic' %}selected{% endif %}>Semantic Search</option>
+                <option value="fts" {% if mode == 'fts' %}selected{% endif %}>Full-Text Search</option>
+            </select>
+        </div>
+        <button type="submit" class="bg-blue-600 px-6 py-3 rounded-lg hover:bg-blue-700 font-medium">
+            Search
+        </button>
+    </form>
+</div>
+
+{% if query %}
+<div class="mb-4 text-gray-400">
+    Found {{ results|length }} results for "<span class="text-white">{{ query }}</span>"
+    <span class="text-gray-500">({{ mode }} search)</span>
+</div>
+{% endif %}
+
+{% if results %}
+<div class="space-y-4">
+    {% for result in results %}
+    <a href="/project/{{ result.project.name }}"
+       class="block bg-gray-800 rounded-lg border border-gray-700 p-5 hover:border-gray-600 hover:bg-gray-800/80 transition-colors">
+        <div class="flex items-start justify-between">
+            <div class="flex-1">
+                <div class="flex items-center gap-3">
+                    <h3 class="text-lg font-semibold text-cyan-400">{{ result.project.name }}</h3>
+                    {% if result.project.primary_language %}
+                    <span class="text-xs bg-gray-700 px-2 py-0.5 rounded text-green-400">
+                        {{ result.project.primary_language }}
+                    </span>
+                    {% endif %}
+                </div>
+                {% if result.project.short_description %}
+                <p class="text-gray-300 mt-2">{{ result.project.short_description }}</p>
+                {% endif %}
+                {% if result.project.keywords %}
+                <div class="flex flex-wrap gap-1 mt-3">
+                    {% for kw in result.project.keywords[:5] %}
+                    <span class="text-xs bg-gray-700/50 px-2 py-0.5 rounded text-gray-400">{{ kw }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+            <div class="text-right ml-4">
+                <div class="text-sm text-gray-500">Score</div>
+                <div class="text-lg font-mono">{{ "%.2f"|format(result.score) }}</div>
+            </div>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% elif query %}
+<div class="text-center py-12">
+    <div class="text-gray-400 text-lg mb-4">No results found</div>
+    <p class="text-gray-500">Try different keywords or use semantic search for natural language queries</p>
+</div>
+{% else %}
+<div class="text-center py-12">
+    <div class="text-gray-400 text-lg mb-4">Enter a search query</div>
+    <p class="text-gray-500">Search by project name, description, or keywords</p>
+</div>
+{% endif %}
+{% endblock %}

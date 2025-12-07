@@ -1,0 +1,20 @@
+Analyze this project and extract metadata as structured JSON.
+
+Examine the code, file structure, package files, and any documentation.
+
+Required fields:
+- name: Project name (from folder name or config files)
+- short_description: One clear sentence describing what this project does (max 150 chars)
+- long_description: A paragraph explaining the project's purpose, how it works, and use cases
+- keywords: Relevant tags (technologies, domains, purposes) - be specific and useful for search
+- primary_language: The main programming language
+- languages: All programming languages used in the project
+- frameworks: Major frameworks and libraries (not every small dependency)
+- modules: Key source files/modules with their paths and one-sentence descriptions
+
+Guidelines:
+- Focus on the most important 10-15 modules maximum
+- Keywords should be lowercase, specific, and useful for searching
+- Be accurate - only report what actually exists in the code
+- For descriptions, focus on WHAT it does, not implementation details
+- Include the purpose and domain of the project in keywords (e.g., "web-scraping", "cli-tool", "api-client")

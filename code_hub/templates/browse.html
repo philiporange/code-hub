@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}Browse Projects - Code Hub{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h1 class="text-2xl font-bold">Browse Projects</h1>
+        {% if language or keyword %}
+        <div class="text-gray-400 mt-1">
+            Filtered by:
+            {% if language %}
+            <span class="text-green-400">{{ language }}</span>
+            {% endif %}
+            {% if keyword %}
+            <span class="text-blue-400">{{ keyword }}</span>
+            {% endif %}
+            <a href="/browse?sort={{ sort }}" class="text-gray-500 hover:text-white ml-2">(clear)</a>
+        </div>
+        {% endif %}
+    </div>
+    <div class="flex items-center gap-4">
+        <span class="text-gray-400">{{ total }} projects</span>
+        <div class="flex items-center gap-2">
+            <label for="sort" class="text-gray-400 text-sm">Sort by:</label>
+            <select id="sort" onchange="updateSort(this.value)"
+                    class="bg-gray-700 border border-gray-600 text-white px-3 py-1.5 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="name" {% if sort == 'name' %}selected{% endif %}>Name</option>
+                <option value="recent" {% if sort == 'recent' %}selected{% endif %}>Recently Modified</option>
+                <option value="created" {% if sort == 'created' %}selected{% endif %}>Oldest First</option>
+                <option value="loc" {% if sort == 'loc' %}selected{% endif %}>Lines of Code</option>
+                <option value="files" {% if sort == 'files' %}selected{% endif %}>File Count</option>
+            </select>
+        </div>
+    </div>
+</div>
+
+<script>
+function updateSort(value) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('sort', value);
+    url.searchParams.set('page', '1');
+    window.location.href = url.toString();
+}
+</script>
+
+{% if projects %}
+<div class="grid gap-4">
+    {% for project in projects %}
+    <a href="/project/{{ project.name }}"
+       class="block bg-gray-800 rounded-lg border border-gray-700 p-4 hover:border-gray-600 hover:bg-gray-800/80 transition-colors">
+        <div class="flex items-start justify-between">
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-3">
+                    <h3 class="font-semibold text-cyan-400 truncate">{{ project.name }}</h3>
+                    {% if project.primary_language %}
+                    <span class="text-xs bg-gray-700 px-2 py-0.5 rounded text-green-400 flex-shrink-0">
+                        {{ project.primary_language }}
+                    </span>
+                    {% endif %}
+                    {% if project.is_git_repo %}
+                    <span class="text-xs text-gray-500 flex-shrink-0">git</span>
+                    {% endif %}
+                </div>
+                {% if project.short_description %}
+                <p class="text-gray-400 text-sm mt-1 truncate">{{ project.short_description }}</p>
+                {% endif %}
+            </div>
+            <div class="text-right ml-4 flex-shrink-0">
+                <div class="text-sm text-gray-400">{{ "{:,}".format(project.lines_of_code) }} loc</div>
+                <div class="text-xs text-gray-500">{{ project.file_count }} files</div>
+                {% if project.last_code_modified_at %}
+                <div class="text-xs text-gray-500 mt-1">
+                    Modified {{ project.last_code_modified_at.strftime('%Y-%m-%d') }}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+
+<!-- Pagination -->
+{% if total_pages > 1 %}
+<div class="flex justify-center gap-2 mt-8">
+    {% if page > 1 %}
+    <a href="/browse?page={{ page - 1 }}&sort={{ sort }}{% if language %}&language={{ language }}{% endif %}{% if keyword %}&keyword={{ keyword }}{% endif %}"
+       class="bg-gray-800 border border-gray-700 px-4 py-2 rounded hover:bg-gray-700">
+        Previous
+    </a>
+    {% endif %}
+
+    <span class="bg-gray-800 border border-gray-700 px-4 py-2 rounded">
+        Page {{ page }} of {{ total_pages }}
+    </span>
+
+    {% if page < total_pages %}
+    <a href="/browse?page={{ page + 1 }}&sort={{ sort }}{% if language %}&language={{ language }}{% endif %}{% if keyword %}&keyword={{ keyword }}{% endif %}"
+       class="bg-gray-800 border border-gray-700 px-4 py-2 rounded hover:bg-gray-700">
+        Next
+    </a>
+    {% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<div class="text-center py-12">
+    <div class="text-gray-400 text-lg mb-4">No projects found</div>
+    <p class="text-gray-500">Run <code class="bg-gray-800 px-2 py-1 rounded">python cli.py scan</code> to discover projects</p>
+</div>
+{% endif %}
+{% endblock %}

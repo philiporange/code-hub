@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}Search "{{ query }}" - {{ project.name }} - Code Hub{% endblock %}
+
+{% block content %}
+<style>
+    .match-highlight {
+        background-color: rgba(250, 204, 21, 0.3);
+        border-radius: 2px;
+        padding: 0 2px;
+    }
+    .code-snippet {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.5;
+    }
+    .code-snippet .line-number {
+        color: #6b7280;
+        user-select: none;
+        text-align: right;
+        padding-right: 1rem;
+        min-width: 3rem;
+        display: inline-block;
+    }
+    .code-snippet .context-line {
+        color: #9ca3af;
+    }
+    .code-snippet .match-line {
+        background-color: rgba(59, 130, 246, 0.1);
+        display: block;
+        margin: 0 -1rem;
+        padding: 0 1rem;
+    }
+</style>
+
+<!-- Header -->
+<div class="mb-6">
+    <div class="flex items-center gap-2 text-sm text-gray-400 mb-2">
+        <a href="/" class="hover:text-white">Home</a>
+        <span>/</span>
+        <a href="/browse" class="hover:text-white">Projects</a>
+        <span>/</span>
+        <a href="/project/{{ project.name }}" class="hover:text-white">{{ project.name }}</a>
+        <span>/</span>
+        <span class="text-gray-300">Search</span>
+    </div>
+
+    <div class="flex items-center justify-between">
+        <h1 class="text-2xl font-bold">Deep Search</h1>
+        <a href="/project/{{ project.name }}"
+           class="text-gray-400 hover:text-white text-sm flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+            </svg>
+            Back to project
+        </a>
+    </div>
+</div>
+
+<!-- Search Form -->
+<form action="/project/{{ project.name }}/search" method="get" class="mb-6">
+    <div class="flex gap-3">
+        <div class="flex-1 relative">
+            <input type="text" name="q" value="{{ query }}" placeholder="Search in {{ project.name }}..."
+                   class="w-full bg-gray-800 border border-gray-700 text-white px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                   autofocus>
+            <svg class="w-5 h-5 text-gray-500 absolute right-4 top-1/2 transform -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            </svg>
+        </div>
+        <button type="submit" class="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-medium transition-colors">
+            Search
+        </button>
+    </div>
+</form>
+
+{% if query %}
+<!-- Results Header -->
+<div class="mb-4 text-gray-400">
+    {% if total_matches > 0 %}
+    Found <span class="text-white font-medium">{{ total_matches }}</span> match{{ 'es' if total_matches != 1 else '' }} in <span class="text-white font-medium">{{ grouped_matches|length }}</span> file{{ 's' if grouped_matches|length != 1 else '' }} for "<span class="text-blue-400">{{ query }}</span>"
+    {% else %}
+    No matches found for "<span class="text-blue-400">{{ query }}</span>"
+    {% endif %}
+</div>
+
+<!-- Results -->
+{% if grouped_matches %}
+<div class="space-y-4">
+    {% for file_group in grouped_matches %}
+    <div class="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+        <!-- File Header -->
+        <div class="bg-gray-900/50 px-4 py-2 border-b border-gray-700 flex items-center justify-between">
+            <a href="/project/{{ project.name }}/view/{{ file_group.file_path }}"
+               class="flex items-center gap-2 text-blue-400 hover:text-blue-300">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                </svg>
+                <span class="font-medium">{{ file_group.file_path }}</span>
+            </a>
+            <span class="text-gray-500 text-sm">{{ file_group.matches|length }} match{{ 'es' if file_group.matches|length != 1 else '' }}</span>
+        </div>
+
+        <!-- Code Snippets -->
+        <div class="p-4 code-snippet overflow-x-auto">
+            {% for match in file_group.matches %}
+            {% if not loop.first %}
+            <div class="text-gray-500 py-2 select-none">⋮</div>
+            {% endif %}
+            {% set start_line = match.line_number - match.context_before|length %}
+
+            <!-- Context Before -->
+            {% for ctx_line in match.context_before %}
+            <div class="context-line">
+                <span class="line-number">{{ start_line + loop.index0 }}</span>{{ ctx_line }}
+            </div>
+            {% endfor %}
+
+            <!-- Match Line -->
+            <a href="/project/{{ project.name }}/view/{{ file_group.file_path }}?line={{ match.line_number }}" class="match-line block hover:bg-blue-900/20">
+                <span class="line-number text-blue-400">{{ match.line_number }}</span><span class="text-white">{{ match.line_content }}</span>
+            </a>
+
+            <!-- Context After -->
+            {% for ctx_line in match.context_after %}
+            <div class="context-line">
+                <span class="line-number">{{ match.line_number + loop.index }}</span>{{ ctx_line }}
+            </div>
+            {% endfor %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="bg-gray-800 border border-gray-700 rounded-lg p-12 text-center">
+    <svg class="w-16 h-16 text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+    </svg>
+    <p class="text-gray-400 text-lg">No results found</p>
+    <p class="text-gray-500 mt-2">Try a different search term or check your spelling</p>
+</div>
+{% endif %}
+
+{% else %}
+<!-- Empty State -->
+<div class="bg-gray-800 border border-gray-700 rounded-lg p-12 text-center">
+    <svg class="w-16 h-16 text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+    </svg>
+    <p class="text-gray-400 text-lg">Search within {{ project.name }}</p>
+    <p class="text-gray-500 mt-2">Enter a search term to find code in this project</p>
+</div>
+{% endif %}
+{% endblock %}

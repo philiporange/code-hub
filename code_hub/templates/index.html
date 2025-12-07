@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}Code Hub - Home{% endblock %}
+
+{% block content %}
+<div class="mb-8">
+    <h1 class="text-3xl font-bold mb-2">Code Hub</h1>
+    <p class="text-gray-400">Your personal code project manager</p>
+</div>
+
+<!-- Stats Cards -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        <h3 class="text-gray-400 text-sm uppercase tracking-wide">Projects</h3>
+        <p class="text-4xl font-bold text-white mt-2">{{ total_projects }}</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        <h3 class="text-gray-400 text-sm uppercase tracking-wide">Lines of Code</h3>
+        <p class="text-4xl font-bold text-white mt-2">{{ "{:,}".format(total_loc) }}</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        <h3 class="text-gray-400 text-sm uppercase tracking-wide">Languages</h3>
+        <p class="text-4xl font-bold text-white mt-2">{{ languages|length }}</p>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+    <!-- Languages -->
+    <div>
+        <h2 class="text-xl font-bold mb-4">Languages</h2>
+        <div class="bg-gray-800 rounded-lg border border-gray-700">
+            {% for lang, count in languages %}
+            <a href="/browse?language={{ lang }}"
+               class="flex justify-between py-3 px-4 border-b border-gray-700 last:border-0 hover:bg-gray-700 transition-colors">
+                <span class="text-green-400 font-medium">{{ lang }}</span>
+                <span class="text-gray-400">{{ count }} projects</span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Recent Projects -->
+    <div>
+        <h2 class="text-xl font-bold mb-4">Recent Projects</h2>
+        <div class="bg-gray-800 rounded-lg border border-gray-700">
+            {% for project in recent_projects %}
+            <a href="/project/{{ project.name }}"
+               class="block py-3 px-4 border-b border-gray-700 last:border-0 hover:bg-gray-700 transition-colors">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <span class="text-cyan-400 font-medium">{{ project.name }}</span>
+                        {% if project.primary_language %}
+                        <span class="text-xs text-gray-500 ml-2">{{ project.primary_language }}</span>
+                        {% endif %}
+                    </div>
+                    <span class="text-gray-500 text-sm">{{ project.lines_of_code|default(0) }} loc</span>
+                </div>
+                {% if project.short_description %}
+                <p class="text-gray-400 text-sm mt-1 truncate">{{ project.short_description }}</p>
+                {% endif %}
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<!-- Keywords Cloud -->
+{% if top_keywords %}
+<div class="mt-12">
+    <h2 class="text-xl font-bold mb-4">Popular Keywords</h2>
+    <div class="flex flex-wrap gap-2">
+        {% for kw in top_keywords %}
+        <a href="/browse?keyword={{ kw.name }}"
+           class="bg-gray-800 border border-gray-700 px-3 py-1.5 rounded-full text-sm hover:bg-gray-700 hover:border-gray-600 transition-colors">
+            {{ kw.name }}
+            <span class="text-gray-500 ml-1">({{ kw.count }})</span>
+        </a>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}

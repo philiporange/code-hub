@@ -1,0 +1,53 @@
+Analyze this project and generate a comprehensive USAGE.md file.
+
+This file should be a self-contained, detailed examples document that allows someone to use this project WITHOUT having to read all the source code.
+
+Include the following sections:
+
+## Quick Start
+- Minimal working example to get started immediately
+- Show the simplest possible usage
+
+## Installation
+- How to install/setup the project
+- Any prerequisites or dependencies
+
+## Basic Usage
+- Core functionality with clear examples
+- Show common use cases
+- Include expected outputs for each example
+
+## API Reference (if applicable)
+- Document all public functions/classes/methods
+- Include type signatures
+- Show input/output examples for each
+
+## Configuration
+- All configuration options
+- Environment variables
+- Config file formats with examples
+
+## Common Patterns
+- Frequently used patterns
+- Best practices
+- Tips and tricks
+
+## Examples
+- Real-world usage scenarios
+- Complete working code snippets
+- Show both input and expected output
+
+## Troubleshooting
+- Common errors and how to fix them
+- FAQ if applicable
+
+Guidelines:
+- Every code example should be complete and runnable
+- Show expected output after code blocks where helpful
+- Use realistic example data
+- Be specific about types, parameters, and return values
+- If it's a CLI tool, show full command examples with output
+- If it's a library, show import statements and full code
+- Don't reference the source code - this should be self-contained
+
+Output ONLY the USAGE.md content in Markdown format, nothing else.

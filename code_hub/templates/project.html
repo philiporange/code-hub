@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} - Code Hub{% endblock %}
+
+{% block header_search %}
+<div class="flex items-center space-x-2">
+    <input type="text" id="search-input" placeholder="Search..."
+           class="bg-gray-700 text-white px-4 py-2 rounded-lg w-64 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-gray-600">
+    <button onclick="searchProject()" class="bg-gray-700 px-4 py-2 rounded-lg hover:bg-gray-600 border border-gray-600 whitespace-nowrap" title="Search within this project">
+        This Project
+    </button>
+    <button onclick="searchAll()" class="bg-gray-700 px-4 py-2 rounded-lg hover:bg-gray-600 border border-gray-600 whitespace-nowrap" title="Search all projects">
+        All Projects
+    </button>
+</div>
+<script>
+function searchProject() {
+    const query = document.getElementById('search-input').value.trim();
+    if (query) {
+        window.location.href = '/project/{{ project.name }}/search?q=' + encodeURIComponent(query);
+    }
+}
+
+function searchAll() {
+    const query = document.getElementById('search-input').value.trim();
+    if (query) {
+        window.location.href = '/search?q=' + encodeURIComponent(query);
+    }
+}
+
+document.getElementById('search-input').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        searchProject();
+    }
+});
+</script>
+{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="mb-8">
+    <div class="flex items-center gap-2 text-sm text-gray-400 mb-2">
+        <a href="/" class="hover:text-white">Home</a>
+        <span>/</span>
+        <a href="/browse" class="hover:text-white">Projects</a>
+        <span>/</span>
+        <span class="text-gray-300">{{ project.name }}</span>
+    </div>
+
+    <div class="flex items-start justify-between">
+        <div>
+            <h1 class="text-3xl font-bold">{{ project.name }}</h1>
+            {% if project.short_description %}
+            <p class="text-gray-400 mt-2 text-lg">{{ project.short_description }}</p>
+            {% endif %}
+        </div>
+
+        {% if project.github_name %}
+        <a href="https://github.com/{{ project.github_name }}"
+           target="_blank"
+           class="bg-gray-800 border border-gray-700 px-4 py-2 rounded-lg hover:bg-gray-700 flex items-center gap-2">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+            </svg>
+            GitHub
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Info Cards -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm">Language</div>
+        <div class="text-lg font-medium text-green-400">{{ project.primary_language or 'Unknown' }}</div>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm">Files</div>
+        <div class="text-lg font-medium">{{ project.file_count }}</div>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm">Lines of Code</div>
+        <div class="text-lg font-medium">{{ "{:,}".format(project.lines_of_code) }}</div>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm">Git</div>
+        <div class="text-lg font-medium">{{ 'Yes' if project.is_git_repo else 'No' }}</div>
+    </div>
+</div>
+
+<!-- Keywords -->
+{% if keywords %}
+<div class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">Keywords</h2>
+    <div class="flex flex-wrap gap-2">
+        {% for kw in keywords %}
+        <a href="/browse?keyword={{ kw }}"
+           class="bg-blue-900/30 border border-blue-700/50 text-blue-300 px-3 py-1 rounded-full text-sm hover:bg-blue-900/50">
+            {{ kw }}
+        </a>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Languages & Frameworks -->
+{% if languages or frameworks %}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+    {% if languages %}
+    <div>
+        <h2 class="text-lg font-semibold mb-3">Languages</h2>
+        <div class="flex flex-wrap gap-2">
+            {% for lang in languages %}
+            <span class="bg-gray-800 border border-gray-700 px-3 py-1 rounded text-sm text-green-400">
+                {{ lang }}
+            </span>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if frameworks %}
+    <div>
+        <h2 class="text-lg font-semibold mb-3">Frameworks</h2>
+        <div class="flex flex-wrap gap-2">
+            {% for fw in frameworks %}
+            <span class="bg-gray-800 border border-gray-700 px-3 py-1 rounded text-sm text-purple-400">
+                {{ fw }}
+            </span>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Modules -->
+{% if modules %}
+<div class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">Key Modules</h2>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+        <table class="w-full">
+            <thead class="bg-gray-900/50">
+                <tr>
+                    <th class="text-left py-3 px-4 font-medium text-gray-300">Module</th>
+                    <th class="text-left py-3 px-4 font-medium text-gray-300">Path</th>
+                    <th class="text-left py-3 px-4 font-medium text-gray-300">Description</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-700">
+                {% for mod in modules %}
+                <tr class="hover:bg-gray-700/50">
+                    <td class="py-3 px-4 text-cyan-400 font-medium">{{ mod.name }}</td>
+                    <td class="py-3 px-4 text-gray-400 font-mono text-sm">{{ mod.path }}</td>
+                    <td class="py-3 px-4 text-gray-300">{{ mod.description }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- File Browser -->
+{% if root_files %}
+<div class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">Files</h2>
+    <div class="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+        <table class="w-full">
+            <thead class="bg-gray-900/50 border-b border-gray-700">
+                <tr>
+                    <th class="text-left py-3 px-4 font-medium text-gray-300 w-1/2">Name</th>
+                    <th class="text-left py-3 px-4 font-medium text-gray-300 hidden md:table-cell">Last Modified</th>
+                    <th class="text-right py-3 px-4 font-medium text-gray-300 w-24">Size</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-700">
+                {% for file in root_files %}
+                <tr class="hover:bg-gray-700/50">
+                    <td class="py-3 px-4">
+                        {% if file.is_directory %}
+                        <a href="/project/{{ project.name }}/files/{{ file.path }}"
+                           class="flex items-center gap-3 text-blue-400 hover:text-blue-300">
+                            <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                            </svg>
+                            {{ file.name }}
+                        </a>
+                        {% else %}
+                        <a href="/project/{{ project.name }}/view/{{ file.path }}"
+                           class="flex items-center gap-3 text-gray-200 hover:text-white">
+                            <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            {{ file.name }}
+                            {% if file.language %}
+                            <span class="text-xs bg-gray-700 text-gray-400 px-2 py-0.5 rounded">{{ file.language }}</span>
+                            {% endif %}
+                        </a>
+                        {% endif %}
+                    </td>
+                    <td class="py-3 px-4 text-gray-400 text-sm hidden md:table-cell">
+                        {% if file.modified_at %}
+                        {{ file.modified_at[:10] }}
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
+                    <td class="py-3 px-4 text-gray-400 text-sm text-right">
+                        {% if file.is_directory %}
+                        -
+                        {% else %}
+                        {{ format_file_size(file.size_bytes) }}
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- README -->
+<div class="mb-8">
+    <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold">README</h2>
+        {% if not has_readme %}
+        <button id="generate-readme-btn" onclick="generateFile('readme')"
+                class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+            </svg>
+            Generate README
+        </button>
+        {% endif %}
+    </div>
+    {% if readme_html %}
+    <div id="readme-content" class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+        <div class="markdown-body text-gray-200">
+            {{ readme_html|safe }}
+        </div>
+    </div>
+    {% else %}
+    <div id="readme-content" class="bg-gray-800 rounded-lg border border-gray-700 p-6 text-center text-gray-500">
+        <p>No README available for this project.</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- USAGE -->
+<div class="mb-8">
+    <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold">Usage Guide</h2>
+        {% if not has_usage %}
+        <button id="generate-usage-btn" onclick="generateFile('usage')"
+                class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+            </svg>
+            Generate USAGE
+        </button>
+        {% endif %}
+    </div>
+    <div id="usage-content" class="bg-gray-800 rounded-lg border border-gray-700 p-6 {% if not has_usage %}text-center text-gray-500{% endif %}">
+        {% if has_usage %}
+        <p class="text-gray-400 text-sm">USAGE.md exists. <a href="/project/{{ project.name }}/view/USAGE.md" class="text-blue-400 hover:underline">View file</a></p>
+        {% else %}
+        <p>No USAGE.md available for this project.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Path -->
+<div class="mt-8 text-sm text-gray-500">
+    <span class="font-medium">Local path:</span>
+    <code class="bg-gray-800 px-2 py-1 rounded ml-2">{{ project.path }}</code>
+</div>
+
+<script>
+async function generateFile(type) {
+    const btn = document.getElementById(`generate-${type}-btn`);
+    const contentDiv = document.getElementById(`${type}-content`);
+    const originalBtnHtml = btn.innerHTML;
+
+    // Show loading state
+    btn.disabled = true;
+    btn.innerHTML = `
+        <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        Generating...
+    `;
+    btn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+    btn.classList.add('bg-gray-600', 'cursor-not-allowed');
+
+    try {
+        const response = await fetch(`/api/projects/{{ project.name }}/generate/${type}`, {
+            method: 'POST'
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            // Success - reload the page to show new content
+            btn.innerHTML = `
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                </svg>
+                Generated!
+            `;
+            btn.classList.remove('bg-gray-600');
+            btn.classList.add('bg-green-600');
+
+            // Reload page after brief delay
+            setTimeout(() => window.location.reload(), 1000);
+        } else {
+            // Error
+            btn.innerHTML = originalBtnHtml;
+            btn.disabled = false;
+            btn.classList.remove('bg-gray-600', 'cursor-not-allowed');
+            btn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+
+            contentDiv.innerHTML = `
+                <div class="text-red-400 text-center">
+                    <p class="font-medium">Generation failed</p>
+                    <p class="text-sm text-gray-500 mt-1">${result.message}</p>
+                </div>
+            `;
+        }
+    } catch (error) {
+        btn.innerHTML = originalBtnHtml;
+        btn.disabled = false;
+        btn.classList.remove('bg-gray-600', 'cursor-not-allowed');
+        btn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+
+        contentDiv.innerHTML = `
+            <div class="text-red-400 text-center">
+                <p class="font-medium">Request failed</p>
+                <p class="text-sm text-gray-500 mt-1">${error.message}</p>
+            </div>
+        `;
+    }
+}
+</script>
+{% endblock %}

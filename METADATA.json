@@ -1,0 +1,100 @@
+{
+  "name": "code-hub",
+  "short_description": "Self-documenting code project management system using Claude AI for automated documentation generation and semantic search.",
+  "long_description": "Code Hub is a comprehensive project management and documentation system that scans your codebase, uses Claude AI to automatically generate README.md, METADATA.json, and USAGE.md files, and provides a web interface with full-text and semantic search capabilities. It maintains a SQLite database with FTS5 indexes and ChromaDB vector embeddings for intelligent project discovery across your entire ~/Code directory.",
+  "keywords": [
+    "project-management",
+    "documentation-generation",
+    "claude-ai",
+    "semantic-search",
+    "code-indexing",
+    "metadata-extraction",
+    "web-interface",
+    "python",
+    "cli-tool",
+    "code-analysis",
+    "fastapi",
+    "sqlite",
+    "chromadb",
+    "rag",
+    "llm"
+  ],
+  "primary_language": "python",
+  "languages": [
+    "python",
+    "html",
+    "css",
+    "javascript"
+  ],
+  "frameworks": [
+    "fastapi",
+    "pydantic",
+    "peewee",
+    "chromadb",
+    "sentence-transformers",
+    "click",
+    "jinja2",
+    "uvicorn"
+  ],
+  "modules": [
+    {
+      "name": "scanner",
+      "path": "code_hub/scanner.py",
+      "description": "Project discovery and analysis module that scans directories, detects programming languages, extracts git information, and collects project statistics."
+    },
+    {
+      "name": "generator",
+      "path": "code_hub/generator.py",
+      "description": "Documentation generation orchestrator that creates README.md, METADATA.json, and USAGE.md files using Claude AI for projects."
+    },
+    {
+      "name": "claude_wrapper",
+      "path": "code_hub/claude_wrapper.py",
+      "description": "Wrapper for Claude Code CLI in headless mode with rate limiting, retries, and timeout management for reliable AI API calls."
+    },
+    {
+      "name": "models",
+      "path": "code_hub/models.py",
+      "description": "Peewee ORM models defining database schema for projects, modules, keywords, dependencies, and full-text search indexes."
+    },
+    {
+      "name": "indexer",
+      "path": "code_hub/indexer.py",
+      "description": "Full-text and vector indexing system for projects using SQLite FTS5 and ChromaDB for searchable content."
+    },
+    {
+      "name": "vectorstore",
+      "path": "code_hub/vectorstore.py",
+      "description": "Vector embeddings and semantic similarity search using ChromaDB and sentence-transformers for intelligent project discovery."
+    },
+    {
+      "name": "server",
+      "path": "code_hub/server.py",
+      "description": "FastAPI web server providing REST API endpoints and HTML web interface for browsing and searching projects."
+    },
+    {
+      "name": "cli",
+      "path": "code_hub/cli.py",
+      "description": "Command-line interface with click providing commands for scanning, generating, indexing, searching, and serving."
+    },
+    {
+      "name": "config",
+      "path": "code_hub/config.py",
+      "description": "Pydantic-based configuration management with environment variable support for paths, Claude models, and server settings."
+    }
+  ],
+  "git": {
+    "is_repo": false,
+    "remote_url": null,
+    "github_name": null,
+    "default_branch": null,
+    "last_commit": null
+  },
+  "stats": {
+    "files": 53,
+    "lines_of_code": 3063,
+    "size_bytes": 283325
+  },
+  "generated_at": "2025-12-06T19:32:11.013665",
+  "generator_version": "1.0.0"
+}
