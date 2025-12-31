@@ -1,4 +1,9 @@
-"""Peewee ORM models for Code Hub."""
+"""Peewee ORM models for Code Hub.
+
+Defines database models for projects, modules, files, keywords, dependencies,
+vector embeddings, LOC history tracking, and scan logs. Uses SQLite with FTS5
+for full-text search capabilities.
+"""
 import json
 from datetime import datetime
 from pathlib import Path
@@ -204,6 +209,36 @@ class ProjectVector(BaseModel):
         table_name = 'project_vectors'
 
 
+class LOCHistory(BaseModel):
+    """Track lines of code over time for each project."""
+
+    project = ForeignKeyField(Project, backref='loc_history', on_delete='CASCADE')
+    lines_of_code = IntegerField()
+    file_count = IntegerField()
+    recorded_at = DateTimeField(default=datetime.now)
+
+    class Meta:
+        table_name = 'loc_history'
+        indexes = (
+            (('project', 'recorded_at'), False),
+        )
+
+
+class ScanLog(BaseModel):
+    """Log of scan operations for tracking and scheduling."""
+
+    scan_type = CharField()  # 'full', 'incremental', 'single'
+    started_at = DateTimeField(default=datetime.now)
+    completed_at = DateTimeField(null=True)
+    projects_scanned = IntegerField(default=0)
+    projects_changed = IntegerField(default=0)
+    errors = TextField(default="[]")  # JSON array of error messages
+    triggered_by = CharField(default="manual")  # 'manual', 'scheduled', 'api'
+
+    class Meta:
+        table_name = 'scan_logs'
+
+
 # Full-text search model using FTS5
 class ProjectFTS(FTS5Model):
     """Full-text search index for projects."""
@@ -228,7 +263,7 @@ def create_tables():
     with db:
         db.create_tables([
             Project, Module, ProjectFile, Keyword, ProjectKeyword,
-            Dependency, ProjectVector, ProjectFTS
+            Dependency, ProjectVector, LOCHistory, ScanLog, ProjectFTS
         ], safe=True)
 
 
@@ -236,7 +271,7 @@ def drop_tables():
     """Drop all database tables."""
     with db:
         db.drop_tables([
-            ProjectFTS, ProjectVector, Dependency,
+            ProjectFTS, ScanLog, LOCHistory, ProjectVector, Dependency,
             ProjectKeyword, Keyword, ProjectFile, Module, Project
         ], safe=True)
 

@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} Stats - Code Hub{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="mb-8">
+    <div class="flex items-center gap-2 text-sm text-gray-400 mb-2">
+        <a href="/" class="hover:text-white">Home</a>
+        <span>/</span>
+        <a href="/browse" class="hover:text-white">Projects</a>
+        <span>/</span>
+        <a href="/project/{{ project.name }}" class="hover:text-white">{{ project.name }}</a>
+        <span>/</span>
+        <span class="text-gray-300">Stats</span>
+    </div>
+
+    <h1 class="text-3xl font-bold">{{ project.name }} - Statistics</h1>
+</div>
+
+<!-- Current Stats -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm">Language</div>
+        <div class="text-lg font-medium text-green-400">{{ project.primary_language or 'Unknown' }}</div>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm">Files</div>
+        <div class="text-lg font-medium">{{ project.file_count }}</div>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm">Lines of Code</div>
+        <div class="text-lg font-medium">{{ "{:,}".format(project.lines_of_code) }}</div>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm">Last Scanned</div>
+        <div class="text-lg font-medium">{{ project.scanned_at.strftime('%Y-%m-%d') if project.scanned_at else 'Never' }}</div>
+    </div>
+</div>
+
+<!-- LOC History Chart -->
+<div class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">Lines of Code History</h2>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <canvas id="loc-chart" height="200"></canvas>
+        <div id="loc-chart-loading" class="text-center text-gray-400 py-8">Loading history...</div>
+        <div id="loc-chart-empty" class="text-center text-gray-500 py-8 hidden">No history data available yet.</div>
+    </div>
+</div>
+
+<!-- History Table -->
+<div class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">History Log</h2>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+        <table class="w-full" id="history-table">
+            <thead class="bg-gray-900/50 border-b border-gray-700">
+                <tr>
+                    <th class="text-left py-3 px-4 font-medium text-gray-300">Date</th>
+                    <th class="text-right py-3 px-4 font-medium text-gray-300">Lines of Code</th>
+                    <th class="text-right py-3 px-4 font-medium text-gray-300">Change</th>
+                    <th class="text-right py-3 px-4 font-medium text-gray-300">Files</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-700" id="history-tbody">
+                <tr>
+                    <td colspan="4" class="py-8 text-center text-gray-500">Loading...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', async function() {
+    const ctx = document.getElementById('loc-chart');
+    const loadingDiv = document.getElementById('loc-chart-loading');
+    const emptyDiv = document.getElementById('loc-chart-empty');
+    const tbody = document.getElementById('history-tbody');
+
+    try {
+        const response = await fetch('/api/projects/{{ project.name }}/loc-history?limit=100');
+        const data = await response.json();
+
+        loadingDiv.classList.add('hidden');
+
+        if (data.length === 0) {
+            emptyDiv.classList.remove('hidden');
+            ctx.classList.add('hidden');
+            tbody.innerHTML = '<tr><td colspan="4" class="py-8 text-center text-gray-500">No history data available yet.</td></tr>';
+            return;
+        }
+
+        // Build history table (newest first)
+        let tableHtml = '';
+        for (let i = 0; i < data.length; i++) {
+            const d = data[i];
+            const date = new Date(d.recorded_at);
+            const dateStr = date.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            let change = '';
+            let changeClass = 'text-gray-400';
+            if (i < data.length - 1) {
+                const diff = d.lines_of_code - data[i + 1].lines_of_code;
+                if (diff > 0) {
+                    change = '+' + diff.toLocaleString();
+                    changeClass = 'text-green-400';
+                } else if (diff < 0) {
+                    change = diff.toLocaleString();
+                    changeClass = 'text-red-400';
+                } else {
+                    change = '0';
+                }
+            } else {
+                change = 'Initial';
+                changeClass = 'text-blue-400';
+            }
+
+            tableHtml += `
+                <tr class="hover:bg-gray-700/50">
+                    <td class="py-3 px-4 text-gray-300">${dateStr}</td>
+                    <td class="py-3 px-4 text-right font-mono">${d.lines_of_code.toLocaleString()}</td>
+                    <td class="py-3 px-4 text-right font-mono ${changeClass}">${change}</td>
+                    <td class="py-3 px-4 text-right text-gray-400">${d.file_count.toLocaleString()}</td>
+                </tr>
+            `;
+        }
+        tbody.innerHTML = tableHtml;
+
+        // Reverse for chart (oldest first)
+        data.reverse();
+
+        const labels = data.map(d => {
+            const date = new Date(d.recorded_at);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+
+        const locValues = data.map(d => d.lines_of_code);
+        const fileValues = data.map(d => d.file_count);
+
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Lines of Code',
+                        data: locValues,
+                        borderColor: '#60a5fa',
+                        backgroundColor: 'rgba(96, 165, 250, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Files',
+                        data: fileValues,
+                        borderColor: '#34d399',
+                        backgroundColor: 'transparent',
+                        borderDash: [5, 5],
+                        tension: 0.3,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                scales: {
+                    x: {
+                        grid: { color: '#374151' },
+                        ticks: { color: '#9ca3af' }
+                    },
+                    y: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
+                        grid: { color: '#374151' },
+                        ticks: { color: '#60a5fa' },
+                        title: {
+                            display: true,
+                            text: 'Lines of Code',
+                            color: '#60a5fa'
+                        }
+                    },
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: { color: '#34d399' },
+                        title: {
+                            display: true,
+                            text: 'Files',
+                            color: '#34d399'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        labels: { color: '#d1d5db' }
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        loadingDiv.textContent = 'Failed to load history';
+        tbody.innerHTML = '<tr><td colspan="4" class="py-8 text-center text-red-400">Failed to load history</td></tr>';
+        console.error('LOC history error:', error);
+    }
+});
+</script>
+{% endblock %}

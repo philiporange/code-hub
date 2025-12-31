@@ -56,12 +56,47 @@ class Settings(BaseSettings):
     embedding_model: str = "all-MiniLM-L6-v2"
 
     # Claude CLI
+    claude_path: str = ""  # Path to claude CLI, empty means search PATH
     claude_timeout: int = 300  # seconds - 5 minutes for complex projects
     claude_max_retries: int = 3
     claude_rate_limit: int = 10  # requests per minute
     claude_readme_model: str = "haiku"  # Haiku for speed
     claude_metadata_model: str = "haiku"  # Haiku for speed
     claude_usage_model: str = "sonnet"  # Sonnet for USAGE.md (more detailed)
+
+    def get_claude_path(self) -> str:
+        """Get the path to claude CLI, searching common locations if not configured."""
+        if self.claude_path:
+            return self.claude_path
+
+        import shutil
+        # First try PATH
+        claude = shutil.which("claude")
+        if claude:
+            return claude
+
+        # Search common nvm locations
+        import os
+        home = Path.home()
+        nvm_dir = home / ".nvm" / "versions" / "node"
+        if nvm_dir.exists():
+            for node_version in sorted(nvm_dir.iterdir(), reverse=True):
+                claude_bin = node_version / "bin" / "claude"
+                if claude_bin.exists():
+                    return str(claude_bin)
+
+        # Search other common locations
+        common_paths = [
+            home / ".local" / "bin" / "claude",
+            Path("/usr/local/bin/claude"),
+            Path("/usr/bin/claude"),
+        ]
+        for path in common_paths:
+            if path.exists():
+                return str(path)
+
+        # Fallback to just "claude" and let it fail with a clear error
+        return "claude"
 
     # Server
     server_host: str = "0.0.0.0"

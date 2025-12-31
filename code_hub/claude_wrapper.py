@@ -83,7 +83,8 @@ class ClaudeWrapper:
         Returns:
             ClaudeResponse with results
         """
-        cmd = ["claude", "-p", prompt, "--output-format", "json"]
+        claude_bin = settings.get_claude_path()
+        cmd = [claude_bin, "-p", prompt, "--output-format", "json"]
 
         if model:
             cmd.extend(["--model", model])

@@ -1,4 +1,10 @@
-"""Project discovery and analysis."""
+"""Project discovery and analysis.
+
+Discovers projects in ~/Code directory by looking for project markers (git repos,
+package files, etc). Scans projects to extract stats, languages, git info, and files.
+Supports incremental scanning by detecting which projects have changed since last scan.
+Records LOC history for tracking code growth over time.
+"""
 import json
 import os
 import subprocess
@@ -499,3 +505,197 @@ def scan_all_projects(base_path: Path = None) -> List[ScannedProject]:
     for path in scanner.discover_projects():
         projects.append(scanner.scan_project(path))
     return projects
+
+
+def get_changed_projects(base_path: Path = None) -> List[tuple[Path, datetime]]:
+    """Find projects that have changed since their last scan.
+
+    Returns list of (project_path, last_modified) tuples for projects
+    where filesystem mtime is newer than the database scanned_at timestamp.
+    """
+    from code_hub.models import Project, db
+
+    scanner = ProjectScanner(base_path=base_path)
+    changed = []
+
+    with db:
+        # Get all known projects with their scan times
+        known_projects = {p.path: p.scanned_at for p in Project.select(Project.path, Project.scanned_at)}
+
+    for project_path in scanner.discover_projects():
+        path_str = str(project_path)
+        scanned_at = known_projects.get(path_str)
+
+        # Get latest modification time from the project directory
+        latest_mtime = _get_project_mtime(project_path, scanner.exclude_patterns)
+
+        if latest_mtime is None:
+            continue
+
+        # Project is changed if:
+        # 1. Never scanned before (not in DB)
+        # 2. Files modified after last scan
+        if scanned_at is None or latest_mtime > scanned_at:
+            changed.append((project_path, latest_mtime))
+
+    return changed
+
+
+def _get_project_mtime(path: Path, exclude_patterns: List[str]) -> Optional[datetime]:
+    """Get the most recent modification time of files in a project."""
+    from fnmatch import fnmatch
+
+    latest: Optional[datetime] = None
+
+    def should_exclude(name: str) -> bool:
+        for pattern in exclude_patterns:
+            if fnmatch(name, pattern):
+                return True
+        if name.startswith('.') and name != '.git':
+            return True
+        return False
+
+    try:
+        for root, dirs, files in os.walk(path):
+            dirs[:] = [d for d in dirs if not should_exclude(d)]
+
+            for filename in files:
+                if filename.startswith('.') or filename.startswith('._'):
+                    continue
+                # Skip generated files that we create
+                if filename in {'METADATA.json', 'README.md', 'USAGE.md'}:
+                    continue
+
+                try:
+                    file_path = Path(root) / filename
+                    mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                    if latest is None or mtime > latest:
+                        latest = mtime
+                except (OSError, IOError):
+                    continue
+    except PermissionError:
+        pass
+
+    return latest
+
+
+def record_loc_history(project_name: str) -> None:
+    """Record current LOC stats for a project in history table."""
+    from code_hub.models import Project, LOCHistory, db
+
+    with db:
+        try:
+            project = Project.get(Project.name == project_name)
+            LOCHistory.create(
+                project=project,
+                lines_of_code=project.lines_of_code,
+                file_count=project.file_count
+            )
+        except Project.DoesNotExist:
+            pass
+
+
+def scan_changed_projects(base_path: Path = None, triggered_by: str = "manual") -> dict:
+    """Scan only projects that have changed since last scan.
+
+    Returns a summary dict with scan statistics.
+    """
+    import json
+    from code_hub.models import Project, LOCHistory, ScanLog, db, create_tables
+
+    create_tables()
+
+    scanner = ProjectScanner(base_path=base_path)
+    changed = get_changed_projects(base_path)
+
+    # Create scan log entry
+    scan_log = ScanLog.create(
+        scan_type='incremental',
+        triggered_by=triggered_by
+    )
+
+    errors = []
+    scanned_count = 0
+
+    for project_path, last_modified in changed:
+        try:
+            scanned = scanner.scan_project(project_path)
+            path_str = str(project_path)
+
+            with db.atomic():
+                # Check if project exists
+                try:
+                    project = Project.get(Project.path == path_str)
+                    old_loc = project.lines_of_code
+
+                    # Update existing project
+                    project.file_count = scanned.stats.file_count
+                    project.lines_of_code = scanned.stats.lines_of_code
+                    project.size_bytes = scanned.stats.size_bytes
+                    project.set_languages(scanned.languages)
+                    if scanned.languages:
+                        project.primary_language = scanned.languages[0]
+                    project.is_git_repo = scanned.git.is_repo
+                    project.git_remote_url = scanned.git.remote_url
+                    project.github_name = scanned.git.github_name
+                    project.default_branch = scanned.git.default_branch
+                    project.last_commit_at = scanned.git.last_commit_at
+                    project.project_created_at = scanned.project_created_at
+                    project.last_code_modified_at = scanned.last_code_modified_at
+                    project.scanned_at = datetime.now()
+                    project.save()
+
+                    # Record LOC history if changed
+                    if project.lines_of_code != old_loc:
+                        LOCHistory.create(
+                            project=project,
+                            lines_of_code=project.lines_of_code,
+                            file_count=project.file_count
+                        )
+
+                except Project.DoesNotExist:
+                    # Create new project
+                    project = Project.create(
+                        name=scanned.name,
+                        path=path_str,
+                        file_count=scanned.stats.file_count,
+                        lines_of_code=scanned.stats.lines_of_code,
+                        size_bytes=scanned.stats.size_bytes,
+                        languages=json.dumps(scanned.languages),
+                        primary_language=scanned.languages[0] if scanned.languages else None,
+                        is_git_repo=scanned.git.is_repo,
+                        git_remote_url=scanned.git.remote_url,
+                        github_name=scanned.git.github_name,
+                        default_branch=scanned.git.default_branch,
+                        last_commit_at=scanned.git.last_commit_at,
+                        project_created_at=scanned.project_created_at,
+                        last_code_modified_at=scanned.last_code_modified_at,
+                        scanned_at=datetime.now()
+                    )
+
+                    # Record initial LOC
+                    LOCHistory.create(
+                        project=project,
+                        lines_of_code=project.lines_of_code,
+                        file_count=project.file_count
+                    )
+
+            scanned_count += 1
+
+        except Exception as e:
+            errors.append(f"{project_path.name}: {str(e)}")
+
+    # Update scan log
+    scan_log.completed_at = datetime.now()
+    scan_log.projects_scanned = scanned_count
+    scan_log.projects_changed = len(changed)
+    scan_log.errors = json.dumps(errors)
+    scan_log.save()
+
+    return {
+        "scan_type": "incremental",
+        "projects_found": len(changed),
+        "projects_scanned": scanned_count,
+        "errors": errors,
+        "triggered_by": triggered_by
+    }

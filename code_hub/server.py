@@ -1,8 +1,25 @@
-"""FastAPI web server for Code Hub."""
+"""FastAPI web server for Code Hub.
+
+Provides web UI and REST API for browsing projects, searching code, generating
+documentation, and managing project scanning. Includes admin functionality for
+initiating scans, viewing changed projects, and tracking LOC history.
+Supports live scan progress via Server-Sent Events (SSE).
+
+Scanning uses DocumentationGenerator.save_to_database() to properly load
+METADATA.json content (descriptions, keywords, modules, frameworks) into the
+database, ensuring consistency with CLI scanning.
+"""
+import asyncio
+import json
 import logging
 import re
+import threading
+import time
+from collections import deque
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
@@ -10,11 +27,14 @@ logger = logging.getLogger(__name__)
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 import markdown
 
-from code_hub.models import Project, Module, ProjectFile, Keyword, ProjectKeyword, db, create_tables
+from code_hub.models import (
+    Project, Module, ProjectFile, Keyword, ProjectKeyword,
+    LOCHistory, ScanLog, db, create_tables
+)
 from code_hub.indexer import get_indexer
 from code_hub.config import settings
 
@@ -77,14 +97,177 @@ class FileContentResponse(BaseModel):
     modified_at: Optional[str] = None
 
 
+# Scan task manager for background scans with progress tracking
+@dataclass
+class ScanProgress:
+    """Tracks progress of a scan operation."""
+    scan_id: str
+    scan_type: str
+    status: str = "pending"  # pending, running, completed, error
+    total_projects: int = 0
+    scanned_count: int = 0
+    current_project: str = ""
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    errors: List[str] = field(default_factory=list)
+    log_messages: deque = field(default_factory=lambda: deque(maxlen=500))
+
+    def add_log(self, message: str, level: str = "info"):
+        """Add a log message."""
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "level": level,
+            "message": message
+        }
+        self.log_messages.append(entry)
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "scan_id": self.scan_id,
+            "scan_type": self.scan_type,
+            "status": self.status,
+            "total_projects": self.total_projects,
+            "scanned_count": self.scanned_count,
+            "current_project": self.current_project,
+            "progress_percent": round(self.scanned_count / max(self.total_projects, 1) * 100, 1),
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "errors": self.errors,
+            "error_count": len(self.errors)
+        }
+
+
+class ScanTaskManager:
+    """Manages background scan tasks with progress tracking."""
+
+    def __init__(self):
+        self.current_scan: Optional[ScanProgress] = None
+        self.scan_history: deque = deque(maxlen=10)
+        self._lock = threading.Lock()
+        self._subscribers: List[asyncio.Queue] = []
+
+    def start_scan(self, scan_type: str, total_projects: int = 0) -> ScanProgress:
+        """Start a new scan, returning the progress tracker."""
+        with self._lock:
+            if self.current_scan and self.current_scan.status == "running":
+                raise ValueError("A scan is already in progress")
+
+            scan_id = f"{scan_type}_{int(time.time())}"
+            self.current_scan = ScanProgress(
+                scan_id=scan_id,
+                scan_type=scan_type,
+                status="running",
+                total_projects=total_projects,
+                started_at=datetime.now()
+            )
+            self.current_scan.add_log(f"Starting {scan_type} scan...")
+            self._notify_subscribers()
+            return self.current_scan
+
+    def update_progress(self, scanned_count: int = None, current_project: str = None,
+                        total_projects: int = None, log_message: str = None, level: str = "info"):
+        """Update scan progress."""
+        with self._lock:
+            if not self.current_scan:
+                return
+
+            if scanned_count is not None:
+                self.current_scan.scanned_count = scanned_count
+            if current_project is not None:
+                self.current_scan.current_project = current_project
+            if total_projects is not None:
+                self.current_scan.total_projects = total_projects
+            if log_message:
+                self.current_scan.add_log(log_message, level)
+
+            self._notify_subscribers()
+
+    def add_error(self, error: str):
+        """Add an error to the current scan."""
+        with self._lock:
+            if self.current_scan:
+                self.current_scan.errors.append(error)
+                self.current_scan.add_log(f"Error: {error}", "error")
+                self._notify_subscribers()
+
+    def complete_scan(self, success: bool = True):
+        """Mark the current scan as complete."""
+        with self._lock:
+            if self.current_scan:
+                self.current_scan.status = "completed" if success else "error"
+                self.current_scan.completed_at = datetime.now()
+                self.current_scan.add_log(
+                    f"Scan completed: {self.current_scan.scanned_count} projects scanned",
+                    "info" if success else "error"
+                )
+                self.scan_history.append(self.current_scan)
+                self._notify_subscribers()
+
+    def get_status(self) -> Optional[dict]:
+        """Get current scan status."""
+        with self._lock:
+            if self.current_scan:
+                return self.current_scan.to_dict()
+            return None
+
+    def get_logs(self, limit: int = 100) -> List[dict]:
+        """Get recent log messages."""
+        with self._lock:
+            if self.current_scan:
+                logs = list(self.current_scan.log_messages)
+                return logs[-limit:]
+            return []
+
+    def is_running(self) -> bool:
+        """Check if a scan is currently running."""
+        with self._lock:
+            return self.current_scan is not None and self.current_scan.status == "running"
+
+    async def subscribe(self) -> asyncio.Queue:
+        """Subscribe to scan updates."""
+        queue = asyncio.Queue()
+        self._subscribers.append(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue):
+        """Unsubscribe from scan updates."""
+        if queue in self._subscribers:
+            self._subscribers.remove(queue)
+
+    def _notify_subscribers(self):
+        """Notify all subscribers of an update."""
+        status = self.current_scan.to_dict() if self.current_scan else None
+        logs = list(self.current_scan.log_messages)[-20:] if self.current_scan else []
+
+        for queue in self._subscribers:
+            try:
+                queue.put_nowait({"status": status, "logs": logs})
+            except asyncio.QueueFull:
+                pass
+
+
+# Global scan task manager
+scan_manager = ScanTaskManager()
+
+
 # Lifespan handler for startup/shutdown
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     db.connect(reuse_if_open=True)
     create_tables()
+
+    # Start scheduler for daily scans at 07:00
+    from code_hub.scheduler import start_scheduler
+    start_scheduler(hour=7, minute=0)
+    logger.info("Started background scheduler for daily 07:00 scans")
+
     yield
+
     # Shutdown
+    from code_hub.scheduler import stop_scheduler
+    stop_scheduler()
     if not db.is_closed():
         db.close()
 
@@ -720,6 +903,458 @@ async def get_stats():
     )
 
 
+# Admin API Models
+class ChangedProjectResponse(BaseModel):
+    name: str
+    path: str
+    last_modified: str
+    scanned_at: Optional[str] = None
+    is_new: bool
+
+
+class ScanResultResponse(BaseModel):
+    scan_type: str
+    projects_found: int
+    projects_scanned: int
+    errors: List[str]
+    triggered_by: str
+
+
+class ScanLogResponse(BaseModel):
+    id: int
+    scan_type: str
+    started_at: str
+    completed_at: Optional[str]
+    projects_scanned: int
+    projects_changed: int
+    errors: List[str]
+    triggered_by: str
+
+
+class LOCHistoryEntry(BaseModel):
+    recorded_at: str
+    lines_of_code: int
+    file_count: int
+
+
+class SchedulerStatusResponse(BaseModel):
+    running: bool
+    next_scan: Optional[str]
+
+
+# Admin API Routes
+@app.get("/api/admin/changed-projects", response_model=List[ChangedProjectResponse])
+async def get_changed_projects():
+    """Get list of projects that have changed since last scan."""
+    from code_hub.scanner import get_changed_projects as find_changed
+
+    changed = find_changed()
+
+    # Get known projects from DB
+    known_projects = {p.path: p for p in Project.select()}
+
+    results = []
+    for project_path, last_modified in changed:
+        path_str = str(project_path)
+        db_project = known_projects.get(path_str)
+
+        results.append(ChangedProjectResponse(
+            name=project_path.name,
+            path=path_str,
+            last_modified=last_modified.isoformat(),
+            scanned_at=db_project.scanned_at.isoformat() if db_project and db_project.scanned_at else None,
+            is_new=db_project is None
+        ))
+
+    return results
+
+
+def _run_scan_in_background(scan_type: str, project_paths: List[Path] = None,
+                            single_project: str = None, regenerate_metadata: bool = False):
+    """Run scan in background thread with progress updates.
+
+    Args:
+        scan_type: Type of scan ('full', 'incremental', 'single')
+        project_paths: List of project paths to scan (for incremental)
+        single_project: Name of single project to scan
+        regenerate_metadata: Whether to regenerate METADATA.json for scanned projects
+    """
+    from code_hub.scanner import ProjectScanner, get_changed_projects
+    from code_hub.generator import DocumentationGenerator
+    from code_hub.models import Project, LOCHistory, ScanLog
+
+    # Lazy import to avoid circular imports and only load when needed
+    claude_wrapper = None
+    if regenerate_metadata:
+        try:
+            from code_hub.claude_wrapper import ClaudeWrapper
+            claude_wrapper = ClaudeWrapper()
+            scan_manager.update_progress(log_message="Metadata regeneration enabled")
+        except Exception as e:
+            scan_manager.update_progress(log_message=f"Warning: Could not initialize Claude: {e}", level="warning")
+            regenerate_metadata = False
+
+    scanner = ProjectScanner()
+    generator = DocumentationGenerator()
+
+    # Determine what to scan
+    if single_project:
+        project_path = settings.code_base_path / single_project
+        if not project_path.exists():
+            try:
+                proj = Project.get(Project.name == single_project)
+                project_path = Path(proj.path)
+            except Project.DoesNotExist:
+                scan_manager.add_error(f"Project not found: {single_project}")
+                scan_manager.complete_scan(success=False)
+                return
+        paths_to_scan = [(project_path, None)]
+    elif project_paths:
+        paths_to_scan = project_paths
+    elif scan_type == "incremental":
+        paths_to_scan = get_changed_projects()
+    else:  # full scan
+        paths_to_scan = [(p, None) for p in scanner.discover_projects()]
+
+    total = len(paths_to_scan)
+    scan_manager.update_progress(total_projects=total, log_message=f"Found {total} projects to scan")
+
+    if total == 0:
+        scan_manager.update_progress(log_message="No projects to scan")
+        scan_manager.complete_scan(success=True)
+        return
+
+    # Create scan log
+    scan_log = ScanLog.create(
+        scan_type=scan_type,
+        triggered_by='api'
+    )
+
+    scanned_count = 0
+    errors = []
+
+    for i, item in enumerate(paths_to_scan):
+        project_path = item[0] if isinstance(item, tuple) else item
+        project_name = project_path.name
+
+        scan_manager.update_progress(
+            scanned_count=i,
+            current_project=project_name,
+            log_message=f"Scanning {project_name}..."
+        )
+
+        try:
+            scanned = scanner.scan_project(project_path)
+
+            # Generate metadata if missing (always) or if regenerate requested
+            metadata_path = project_path / 'METADATA.json'
+            metadata_exists = metadata_path.exists()
+            needs_metadata = not metadata_exists or regenerate_metadata
+
+            if needs_metadata:
+                # Lazy-init Claude wrapper if not already done
+                if claude_wrapper is None:
+                    try:
+                        from code_hub.claude_wrapper import ClaudeWrapper
+                        claude_wrapper = ClaudeWrapper()
+                    except Exception as e:
+                        scan_manager.update_progress(
+                            log_message=f"  Warning: Could not initialize Claude for metadata: {e}",
+                            level="warning"
+                        )
+                        claude_wrapper = False  # Mark as failed so we don't retry
+
+                if claude_wrapper:
+                    try:
+                        reason = "missing" if not metadata_exists else "regenerate"
+                        scan_manager.update_progress(
+                            log_message=f"  Generating METADATA for {project_name} ({reason})..."
+                        )
+                        response = claude_wrapper.generate_metadata(project_path)
+                        if response.success and response.content.strip():
+                            # Parse and save metadata
+                            try:
+                                metadata = json.loads(response.content)
+                                metadata_path.write_text(json.dumps(metadata, indent=2))
+                                scan_manager.update_progress(
+                                    log_message=f"  METADATA saved for {project_name}"
+                                )
+                                # Update scanned object so save_to_database picks it up
+                                scanned.existing_metadata = metadata
+                            except json.JSONDecodeError as e:
+                                scan_manager.update_progress(
+                                    log_message=f"  METADATA parse error for {project_name}: {e}",
+                                    level="warning"
+                                )
+                        else:
+                            scan_manager.update_progress(
+                                log_message=f"  METADATA generation failed for {project_name}: {response.error or 'Empty response'}",
+                                level="warning"
+                            )
+                    except Exception as e:
+                        scan_manager.update_progress(
+                            log_message=f"  METADATA error for {project_name}: {e}",
+                            level="warning"
+                        )
+
+            # Check if project already exists to track LOC changes
+            path_str = str(project_path)
+            old_loc = None
+            try:
+                existing_project = Project.get(Project.path == path_str)
+                old_loc = existing_project.lines_of_code
+                is_new_project = False
+            except Project.DoesNotExist:
+                is_new_project = True
+
+            # Use generator.save_to_database() which properly loads METADATA.json
+            # into the database (short_description, keywords, modules, etc.)
+            project = generator.save_to_database(scanned)
+
+            # Record LOC history if changed or new
+            if is_new_project:
+                LOCHistory.create(
+                    project=project,
+                    lines_of_code=project.lines_of_code,
+                    file_count=project.file_count
+                )
+                scan_manager.update_progress(
+                    log_message=f"  {project_name}: NEW ({project.lines_of_code} LOC)"
+                )
+            elif old_loc is not None and project.lines_of_code != old_loc:
+                LOCHistory.create(
+                    project=project,
+                    lines_of_code=project.lines_of_code,
+                    file_count=project.file_count
+                )
+                scan_manager.update_progress(
+                    log_message=f"  {project_name}: {old_loc} -> {project.lines_of_code} LOC"
+                )
+
+            scanned_count += 1
+
+        except Exception as e:
+            error_msg = f"{project_name}: {str(e)}"
+            errors.append(error_msg)
+            scan_manager.add_error(error_msg)
+
+    # Update final progress
+    scan_manager.update_progress(
+        scanned_count=scanned_count,
+        current_project="",
+        log_message=f"Scan complete: {scanned_count}/{total} projects"
+    )
+
+    # Save scan log
+    scan_log.completed_at = datetime.now()
+    scan_log.projects_scanned = scanned_count
+    scan_log.projects_changed = scanned_count
+    scan_log.errors = json.dumps(errors)
+    scan_log.save()
+
+    scan_manager.complete_scan(success=len(errors) == 0)
+
+
+class ScanOptions(BaseModel):
+    """Options for scan operations."""
+    regenerate_metadata: bool = False
+
+
+@app.post("/api/admin/scan/incremental")
+async def trigger_incremental_scan(options: Optional[ScanOptions] = None):
+    """Trigger an incremental scan of changed projects (background)."""
+    if scan_manager.is_running():
+        raise HTTPException(status_code=409, detail="A scan is already in progress")
+
+    regenerate_metadata = options.regenerate_metadata if options else False
+
+    from code_hub.scanner import get_changed_projects
+    changed = get_changed_projects()
+
+    scan_manager.start_scan("incremental", total_projects=len(changed))
+
+    thread = threading.Thread(
+        target=_run_scan_in_background,
+        args=("incremental", changed, None, regenerate_metadata),
+        daemon=True
+    )
+    thread.start()
+
+    return {"message": "Incremental scan started", "scan_id": scan_manager.current_scan.scan_id}
+
+
+@app.post("/api/admin/scan/full")
+async def trigger_full_scan(options: Optional[ScanOptions] = None):
+    """Trigger a full rescan of all projects in ~/Code (background)."""
+    if scan_manager.is_running():
+        raise HTTPException(status_code=409, detail="A scan is already in progress")
+
+    regenerate_metadata = options.regenerate_metadata if options else False
+
+    from code_hub.scanner import ProjectScanner
+    scanner = ProjectScanner()
+    project_count = len(list(scanner.discover_projects()))
+
+    scan_manager.start_scan("full", total_projects=project_count)
+
+    thread = threading.Thread(
+        target=_run_scan_in_background,
+        args=("full", None, None, regenerate_metadata),
+        daemon=True
+    )
+    thread.start()
+
+    return {"message": "Full scan started", "scan_id": scan_manager.current_scan.scan_id}
+
+
+@app.post("/api/admin/scan/project/{name}")
+async def scan_single_project(name: str, options: Optional[ScanOptions] = None):
+    """Scan a specific project by name (background)."""
+    if scan_manager.is_running():
+        raise HTTPException(status_code=409, detail="A scan is already in progress")
+
+    regenerate_metadata = options.regenerate_metadata if options else False
+
+    # Verify project exists
+    try:
+        project = Project.get(Project.name == name)
+        project_path = Path(project.path)
+    except Project.DoesNotExist:
+        project_path = settings.code_base_path / name
+        if not project_path.exists():
+            raise HTTPException(status_code=404, detail="Project not found")
+
+    scan_manager.start_scan("single", total_projects=1)
+
+    thread = threading.Thread(
+        target=_run_scan_in_background,
+        args=("single", None, name, regenerate_metadata),
+        daemon=True
+    )
+    thread.start()
+
+    return {"message": f"Scan started for {name}", "scan_id": scan_manager.current_scan.scan_id}
+
+
+@app.get("/api/admin/scan/status")
+async def get_scan_status():
+    """Get current scan status."""
+    status = scan_manager.get_status()
+    if status:
+        return status
+    return {"status": "idle", "message": "No scan in progress"}
+
+
+@app.get("/api/admin/scan/logs")
+async def get_scan_progress_logs(limit: int = Query(100, le=500)):
+    """Get recent scan log messages."""
+    return scan_manager.get_logs(limit)
+
+
+@app.get("/api/admin/scan/stream")
+async def scan_event_stream():
+    """Server-Sent Events stream for live scan updates."""
+    async def event_generator():
+        queue = await scan_manager.subscribe()
+        try:
+            # Send initial status
+            status = scan_manager.get_status()
+            logs = scan_manager.get_logs(50)
+            initial_data = json.dumps({"status": status, "logs": logs})
+            yield f"data: {initial_data}\n\n"
+
+            while True:
+                try:
+                    # Wait for updates with timeout
+                    data = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"data: {json.dumps(data)}\n\n"
+
+                    # Check if scan completed
+                    if data.get("status", {}).get("status") in ("completed", "error"):
+                        # Send one more update then close
+                        await asyncio.sleep(1)
+                        break
+
+                except asyncio.TimeoutError:
+                    # Send keepalive
+                    yield f": keepalive\n\n"
+
+        except asyncio.CancelledError:
+            pass
+        finally:
+            scan_manager.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@app.get("/api/admin/scan-logs", response_model=List[ScanLogResponse])
+async def get_scan_logs(limit: int = Query(20, le=100)):
+    """Get recent scan logs."""
+    logs = ScanLog.select().order_by(ScanLog.started_at.desc()).limit(limit)
+
+    return [
+        ScanLogResponse(
+            id=log.id,
+            scan_type=log.scan_type,
+            started_at=log.started_at.isoformat(),
+            completed_at=log.completed_at.isoformat() if log.completed_at else None,
+            projects_scanned=log.projects_scanned,
+            projects_changed=log.projects_changed,
+            errors=json.loads(log.errors) if log.errors else [],
+            triggered_by=log.triggered_by
+        )
+        for log in logs
+    ]
+
+
+@app.get("/api/admin/scheduler-status", response_model=SchedulerStatusResponse)
+async def get_scheduler_status():
+    """Get scheduler status and next scheduled scan time."""
+    from code_hub.scheduler import get_scheduler, get_next_scan_time
+
+    scheduler = get_scheduler()
+    next_scan = get_next_scan_time()
+
+    return SchedulerStatusResponse(
+        running=scheduler is not None and scheduler.running,
+        next_scan=next_scan.isoformat() if next_scan else None
+    )
+
+
+@app.get("/api/projects/{name}/loc-history", response_model=List[LOCHistoryEntry])
+async def get_project_loc_history(name: str, limit: int = Query(100, le=500)):
+    """Get LOC history for a project."""
+    try:
+        project = Project.get(Project.name == name)
+    except Project.DoesNotExist:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    history = (
+        LOCHistory
+        .select()
+        .where(LOCHistory.project == project)
+        .order_by(LOCHistory.recorded_at.desc())
+        .limit(limit)
+    )
+
+    return [
+        LOCHistoryEntry(
+            recorded_at=h.recorded_at.isoformat(),
+            lines_of_code=h.lines_of_code,
+            file_count=h.file_count
+        )
+        for h in history
+    ]
+
+
 # HTML Routes
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -872,6 +1507,26 @@ async def project_deep_search_page(request: Request, name: str, q: str = ""):
     return HTMLResponse(f"<h1>Search: {name}</h1>")
 
 
+@app.get("/project/{name}/stats", response_class=HTMLResponse)
+async def project_stats_page(request: Request, name: str):
+    """Project statistics page with LOC history chart."""
+    if templates:
+        try:
+            project = Project.get(Project.name == name)
+        except Project.DoesNotExist:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        return templates.TemplateResponse(
+            "project_stats.html",
+            {
+                "request": request,
+                "project": project
+            }
+        )
+
+    return HTMLResponse(f"<h1>Stats: {name}</h1>")
+
+
 @app.get("/project/{name}/files", response_class=HTMLResponse)
 @app.get("/project/{name}/files/{dir_path:path}", response_class=HTMLResponse)
 async def project_files_page(request: Request, name: str, dir_path: str = ""):
@@ -1013,6 +1668,56 @@ async def search_page(request: Request, q: str = "", mode: str = "hybrid"):
         )
 
     return HTMLResponse("<h1>Search</h1>")
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request):
+    """Admin page for managing scans and viewing project status."""
+    if templates:
+        from code_hub.scheduler import get_scheduler, get_next_scan_time
+
+        # Get changed projects
+        try:
+            changed_projects = await get_changed_projects()
+        except Exception:
+            changed_projects = []
+
+        # Get recent scan logs
+        logs = ScanLog.select().order_by(ScanLog.started_at.desc()).limit(10)
+        scan_logs = [
+            {
+                "id": log.id,
+                "scan_type": log.scan_type,
+                "started_at": log.started_at,
+                "completed_at": log.completed_at,
+                "projects_scanned": log.projects_scanned,
+                "projects_changed": log.projects_changed,
+                "errors": json.loads(log.errors) if log.errors else [],
+                "triggered_by": log.triggered_by
+            }
+            for log in logs
+        ]
+
+        # Get scheduler status
+        scheduler = get_scheduler()
+        next_scan = get_next_scan_time()
+
+        # Get all projects for the scan dropdown
+        all_projects = Project.select(Project.name).order_by(Project.name)
+
+        return templates.TemplateResponse(
+            "admin.html",
+            {
+                "request": request,
+                "changed_projects": changed_projects,
+                "scan_logs": scan_logs,
+                "scheduler_running": scheduler is not None and scheduler.running,
+                "next_scan": next_scan,
+                "all_projects": [p.name for p in all_projects]
+            }
+        )
+
+    return HTMLResponse("<h1>Admin</h1>")
 
 
 @app.get("/browse", response_class=HTMLResponse)

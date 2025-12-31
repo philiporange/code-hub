@@ -1,0 +1,655 @@
+{% extends "base.html" %}
+
+{% block title %}Admin - Code Hub{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <div class="flex items-center justify-between">
+        <h1 class="text-3xl font-bold">Admin Dashboard</h1>
+        <a href="/" class="text-blue-400 hover:text-blue-300">Back to Home</a>
+    </div>
+
+    <!-- Scan Progress (shown when scan is running) -->
+    <div id="scan-progress-section" class="bg-gray-800 rounded-lg p-6 border border-blue-500 hidden">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-semibold flex items-center gap-2">
+                <svg class="w-5 h-5 animate-spin text-blue-400" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span id="scan-status-title">Scan in Progress</span>
+            </h2>
+            <span id="scan-type-badge" class="bg-blue-600 text-xs px-2 py-1 rounded">full</span>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="mb-4">
+            <div class="flex justify-between text-sm text-gray-400 mb-1">
+                <span id="progress-current">Scanning...</span>
+                <span id="progress-count">0 / 0</span>
+            </div>
+            <div class="w-full bg-gray-700 rounded-full h-3">
+                <div id="progress-bar" class="bg-blue-500 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                <span id="progress-percent">0%</span>
+                <span id="progress-errors" class="text-red-400 hidden">0 errors</span>
+            </div>
+        </div>
+
+        <!-- Live Log Viewer -->
+        <div class="mt-4">
+            <div class="flex items-center justify-between mb-2">
+                <h3 class="text-sm font-medium text-gray-400">Live Log</h3>
+                <button onclick="clearLogs()" class="text-xs text-gray-500 hover:text-gray-300">Clear</button>
+            </div>
+            <div id="log-viewer" class="bg-gray-900 rounded-lg p-3 h-48 overflow-y-auto font-mono text-xs">
+                <div class="text-gray-500">Waiting for scan to start...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scheduler Status -->
+    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        <h2 class="text-xl font-semibold mb-4">Scheduler Status</h2>
+        <div class="flex items-center space-x-6">
+            <div class="flex items-center space-x-2">
+                <span class="w-3 h-3 rounded-full {% if scheduler_running %}bg-green-500{% else %}bg-red-500{% endif %}"></span>
+                <span>{% if scheduler_running %}Running{% else %}Stopped{% endif %}</span>
+            </div>
+            {% if next_scan %}
+            <div class="text-gray-400">
+                Next scheduled scan: <span class="text-white">{{ next_scan.strftime('%Y-%m-%d %H:%M') }}</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Scan Actions -->
+    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        <h2 class="text-xl font-semibold mb-4">Scan Actions</h2>
+
+        <!-- Scan Options -->
+        <div class="mb-4 p-3 bg-gray-700 rounded-lg">
+            <label class="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" id="regenerate-metadata" class="w-4 h-4 rounded bg-gray-600 border-gray-500 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-800">
+                <span class="text-sm">Regenerate METADATA.json</span>
+                <span class="text-xs text-gray-400">(Uses Claude to analyze and update project metadata)</span>
+            </label>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- Full Scan -->
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h3 class="font-medium mb-2">Full Scan</h3>
+                <p class="text-sm text-gray-400 mb-3">Rescan all projects in ~/Code</p>
+                <button onclick="triggerScan('full')" id="btn-full-scan"
+                        class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm w-full disabled:opacity-50 disabled:cursor-not-allowed">
+                    Start Full Scan
+                </button>
+            </div>
+
+            <!-- Incremental Scan -->
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h3 class="font-medium mb-2">Incremental Scan</h3>
+                <p class="text-sm text-gray-400 mb-3">Scan only changed projects</p>
+                <button onclick="triggerScan('incremental')" id="btn-incremental-scan"
+                        class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-sm w-full disabled:opacity-50 disabled:cursor-not-allowed">
+                    Scan Changed
+                </button>
+            </div>
+
+            <!-- Single Project Scan -->
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h3 class="font-medium mb-2">Single Project</h3>
+                <p class="text-sm text-gray-400 mb-3">Scan a specific project</p>
+                <select id="project-select" class="bg-gray-600 rounded px-3 py-2 text-sm w-full mb-2">
+                    <option value="">Select project...</option>
+                    {% for project in all_projects %}
+                    <option value="{{ project }}">{{ project }}</option>
+                    {% endfor %}
+                </select>
+                <button onclick="triggerProjectScan()" id="btn-project-scan"
+                        class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded text-sm w-full disabled:opacity-50 disabled:cursor-not-allowed">
+                    Scan Project
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Changed Projects -->
+    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-semibold">Changed Projects</h2>
+            <button onclick="refreshChangedProjects()" class="text-sm text-blue-400 hover:text-blue-300">
+                Refresh
+            </button>
+        </div>
+
+        <div id="changed-projects-list">
+            {% if changed_projects %}
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead>
+                        <tr class="text-left text-gray-400 border-b border-gray-700">
+                            <th class="pb-2">Project</th>
+                            <th class="pb-2">Status</th>
+                            <th class="pb-2">Last Modified</th>
+                            <th class="pb-2">Last Scanned</th>
+                            <th class="pb-2">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        {% for project in changed_projects %}
+                        <tr class="hover:bg-gray-700">
+                            <td class="py-2">
+                                <a href="/project/{{ project.name }}" class="text-blue-400 hover:text-blue-300">
+                                    {{ project.name }}
+                                </a>
+                            </td>
+                            <td class="py-2">
+                                {% if project.is_new %}
+                                <span class="bg-green-600 text-xs px-2 py-1 rounded">NEW</span>
+                                {% else %}
+                                <span class="bg-yellow-600 text-xs px-2 py-1 rounded">CHANGED</span>
+                                {% endif %}
+                            </td>
+                            <td class="py-2 text-gray-400 text-sm">{{ project.last_modified[:19] }}</td>
+                            <td class="py-2 text-gray-400 text-sm">{{ project.scanned_at[:19] if project.scanned_at else '-' }}</td>
+                            <td class="py-2">
+                                <button onclick="scanSingleProject('{{ project.name }}')"
+                                        class="text-sm text-blue-400 hover:text-blue-300">
+                                    Scan
+                                </button>
+                                <span class="mx-2 text-gray-600">|</span>
+                                <button onclick="generateDocs('{{ project.name }}')"
+                                        class="text-sm text-green-400 hover:text-green-300">
+                                    Generate Docs
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-gray-400">No projects have changed since last scan.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Recent Scan Logs -->
+    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        <h2 class="text-xl font-semibold mb-4">Recent Scan History</h2>
+        {% if scan_logs %}
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="text-left text-gray-400 border-b border-gray-700">
+                        <th class="pb-2">Type</th>
+                        <th class="pb-2">Triggered By</th>
+                        <th class="pb-2">Started</th>
+                        <th class="pb-2">Completed</th>
+                        <th class="pb-2">Projects</th>
+                        <th class="pb-2">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-700">
+                    {% for log in scan_logs %}
+                    <tr class="hover:bg-gray-700">
+                        <td class="py-2">
+                            <span class="{% if log.scan_type == 'full' %}text-blue-400{% elif log.scan_type == 'incremental' %}text-green-400{% else %}text-purple-400{% endif %}">
+                                {{ log.scan_type }}
+                            </span>
+                        </td>
+                        <td class="py-2 text-gray-400">{{ log.triggered_by }}</td>
+                        <td class="py-2 text-gray-400 text-sm">{{ log.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                        <td class="py-2 text-gray-400 text-sm">
+                            {% if log.completed_at %}
+                            {{ log.completed_at.strftime('%Y-%m-%d %H:%M:%S') }}
+                            {% else %}
+                            <span class="text-yellow-400">Running...</span>
+                            {% endif %}
+                        </td>
+                        <td class="py-2">{{ log.projects_scanned }}</td>
+                        <td class="py-2">
+                            {% if log.errors %}
+                            <span class="text-red-400 cursor-pointer" onclick="alert('{{ log.errors|join('\\n') }}')">
+                                {{ log.errors|length }} error(s)
+                            </span>
+                            {% else %}
+                            <span class="text-green-400">OK</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-gray-400">No scan history available.</p>
+        {% endif %}
+    </div>
+
+    <!-- Documentation Generation -->
+    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        <h2 class="text-xl font-semibold mb-4">Generate Documentation</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h3 class="font-medium mb-2">Generate README.md</h3>
+                <p class="text-sm text-gray-400 mb-3">Generate a README for a project using Claude</p>
+                <select id="readme-project-select" class="bg-gray-600 rounded px-3 py-2 text-sm w-full mb-2">
+                    <option value="">Select project...</option>
+                    {% for project in all_projects %}
+                    <option value="{{ project }}">{{ project }}</option>
+                    {% endfor %}
+                </select>
+                <button onclick="generateReadme()" id="btn-generate-readme"
+                        class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm w-full">
+                    Generate README
+                </button>
+            </div>
+
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h3 class="font-medium mb-2">Generate USAGE.md</h3>
+                <p class="text-sm text-gray-400 mb-3">Generate a usage guide for a project using Claude</p>
+                <select id="usage-project-select" class="bg-gray-600 rounded px-3 py-2 text-sm w-full mb-2">
+                    <option value="">Select project...</option>
+                    {% for project in all_projects %}
+                    <option value="{{ project }}">{{ project }}</option>
+                    {% endfor %}
+                </select>
+                <button onclick="generateUsage()" id="btn-generate-usage"
+                        class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-sm w-full">
+                    Generate USAGE
+                </button>
+            </div>
+        </div>
+
+        <!-- Generation Result -->
+        <div id="generation-result" class="mt-4 hidden">
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h4 class="font-medium mb-2">Generation Result</h4>
+                <pre id="generation-result-content" class="text-sm text-gray-300 whitespace-pre-wrap"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let eventSource = null;
+let scanRunning = false;
+
+// Check scan status on page load
+document.addEventListener('DOMContentLoaded', checkScanStatus);
+
+async function checkScanStatus() {
+    try {
+        const response = await fetch('/api/admin/scan/status');
+        const status = await response.json();
+
+        if (status.status === 'running') {
+            showScanProgress(status);
+            connectToSSE();
+        }
+    } catch (error) {
+        console.error('Error checking scan status:', error);
+    }
+}
+
+function showScanProgress(status) {
+    scanRunning = true;
+    const section = document.getElementById('scan-progress-section');
+    section.classList.remove('hidden');
+
+    // Disable all scan buttons
+    document.querySelectorAll('[id^="btn-"]').forEach(btn => {
+        if (btn.id.includes('scan')) {
+            btn.disabled = true;
+        }
+    });
+
+    updateProgressUI(status);
+}
+
+function hideScanProgress() {
+    scanRunning = false;
+    const section = document.getElementById('scan-progress-section');
+    section.classList.add('hidden');
+
+    // Re-enable all scan buttons
+    document.querySelectorAll('[id^="btn-"]').forEach(btn => {
+        btn.disabled = false;
+    });
+}
+
+function updateProgressUI(status) {
+    if (!status) return;
+
+    document.getElementById('scan-type-badge').textContent = status.scan_type;
+    document.getElementById('progress-current').textContent = status.current_project || 'Initializing...';
+    document.getElementById('progress-count').textContent = `${status.scanned_count} / ${status.total_projects}`;
+    document.getElementById('progress-percent').textContent = `${status.progress_percent}%`;
+    document.getElementById('progress-bar').style.width = `${status.progress_percent}%`;
+
+    const errorsEl = document.getElementById('progress-errors');
+    if (status.error_count > 0) {
+        errorsEl.textContent = `${status.error_count} error(s)`;
+        errorsEl.classList.remove('hidden');
+    } else {
+        errorsEl.classList.add('hidden');
+    }
+
+    // Update title based on status
+    const titleEl = document.getElementById('scan-status-title');
+    if (status.status === 'completed') {
+        titleEl.textContent = 'Scan Complete';
+        document.getElementById('progress-bar').classList.remove('bg-blue-500');
+        document.getElementById('progress-bar').classList.add('bg-green-500');
+    } else if (status.status === 'error') {
+        titleEl.textContent = 'Scan Failed';
+        document.getElementById('progress-bar').classList.remove('bg-blue-500');
+        document.getElementById('progress-bar').classList.add('bg-red-500');
+    }
+}
+
+function updateLogs(logs) {
+    const viewer = document.getElementById('log-viewer');
+    if (!logs || logs.length === 0) return;
+
+    let html = '';
+    for (const log of logs) {
+        const time = new Date(log.timestamp).toLocaleTimeString();
+        const levelClass = log.level === 'error' ? 'text-red-400' :
+                          log.level === 'warning' ? 'text-yellow-400' : 'text-gray-400';
+        html += `<div class="${levelClass}"><span class="text-gray-600">[${time}]</span> ${escapeHtml(log.message)}</div>`;
+    }
+    viewer.innerHTML = html;
+    viewer.scrollTop = viewer.scrollHeight;
+}
+
+function clearLogs() {
+    document.getElementById('log-viewer').innerHTML = '<div class="text-gray-500">Log cleared</div>';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function connectToSSE() {
+    if (eventSource) {
+        eventSource.close();
+    }
+
+    eventSource = new EventSource('/api/admin/scan/stream');
+
+    eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.status) {
+            updateProgressUI(data.status);
+
+            if (data.status.status === 'completed' || data.status.status === 'error') {
+                eventSource.close();
+                eventSource = null;
+
+                // Delay then refresh
+                setTimeout(() => {
+                    hideScanProgress();
+                    refreshChangedProjects();
+                }, 2000);
+            }
+        }
+
+        if (data.logs) {
+            updateLogs(data.logs);
+        }
+    };
+
+    eventSource.onerror = () => {
+        console.log('SSE connection error or closed');
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+    };
+}
+
+function getScanOptions() {
+    return {
+        regenerate_metadata: document.getElementById('regenerate-metadata').checked
+    };
+}
+
+async function triggerScan(type) {
+    if (scanRunning) {
+        alert('A scan is already in progress');
+        return;
+    }
+
+    const options = getScanOptions();
+
+    try {
+        const response = await fetch(`/api/admin/scan/${type}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(options)
+        });
+
+        if (response.status === 409) {
+            alert('A scan is already in progress');
+            return;
+        }
+
+        const result = await response.json();
+
+        // Show progress section and connect to SSE
+        showScanProgress({
+            scan_type: type,
+            status: 'running',
+            scanned_count: 0,
+            total_projects: 0,
+            current_project: 'Starting...',
+            progress_percent: 0,
+            error_count: 0
+        });
+
+        connectToSSE();
+
+    } catch (error) {
+        alert(`Error starting scan: ${error.message}`);
+    }
+}
+
+async function triggerProjectScan() {
+    const select = document.getElementById('project-select');
+    const projectName = select.value;
+
+    if (!projectName) {
+        alert('Please select a project');
+        return;
+    }
+
+    if (scanRunning) {
+        alert('A scan is already in progress');
+        return;
+    }
+
+    const options = getScanOptions();
+
+    try {
+        const response = await fetch(`/api/admin/scan/project/${encodeURIComponent(projectName)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(options)
+        });
+
+        if (response.status === 409) {
+            alert('A scan is already in progress');
+            return;
+        }
+
+        const result = await response.json();
+
+        showScanProgress({
+            scan_type: 'single',
+            status: 'running',
+            scanned_count: 0,
+            total_projects: 1,
+            current_project: projectName,
+            progress_percent: 0,
+            error_count: 0
+        });
+
+        connectToSSE();
+
+    } catch (error) {
+        alert(`Error starting scan: ${error.message}`);
+    }
+}
+
+function scanSingleProject(projectName) {
+    document.getElementById('project-select').value = projectName;
+    triggerProjectScan();
+}
+
+async function refreshChangedProjects() {
+    try {
+        const response = await fetch('/api/admin/changed-projects');
+        const projects = await response.json();
+
+        const container = document.getElementById('changed-projects-list');
+
+        if (projects.length === 0) {
+            container.innerHTML = '<p class="text-gray-400">No projects have changed since last scan.</p>';
+            return;
+        }
+
+        let html = `<div class="overflow-x-auto"><table class="w-full">
+            <thead>
+                <tr class="text-left text-gray-400 border-b border-gray-700">
+                    <th class="pb-2">Project</th>
+                    <th class="pb-2">Status</th>
+                    <th class="pb-2">Last Modified</th>
+                    <th class="pb-2">Last Scanned</th>
+                    <th class="pb-2">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-700">`;
+
+        for (const project of projects) {
+            const status = project.is_new
+                ? '<span class="bg-green-600 text-xs px-2 py-1 rounded">NEW</span>'
+                : '<span class="bg-yellow-600 text-xs px-2 py-1 rounded">CHANGED</span>';
+
+            html += `<tr class="hover:bg-gray-700">
+                <td class="py-2"><a href="/project/${project.name}" class="text-blue-400 hover:text-blue-300">${escapeHtml(project.name)}</a></td>
+                <td class="py-2">${status}</td>
+                <td class="py-2 text-gray-400 text-sm">${project.last_modified.substring(0, 19)}</td>
+                <td class="py-2 text-gray-400 text-sm">${project.scanned_at ? project.scanned_at.substring(0, 19) : '-'}</td>
+                <td class="py-2">
+                    <button onclick="scanSingleProject('${escapeHtml(project.name)}')" class="text-sm text-blue-400 hover:text-blue-300">Scan</button>
+                    <span class="mx-2 text-gray-600">|</span>
+                    <button onclick="generateDocs('${escapeHtml(project.name)}')" class="text-sm text-green-400 hover:text-green-300">Generate Docs</button>
+                </td>
+            </tr>`;
+        }
+
+        html += '</tbody></table></div>';
+        container.innerHTML = html;
+    } catch (error) {
+        console.error('Error refreshing changed projects:', error);
+    }
+}
+
+async function generateReadme() {
+    const select = document.getElementById('readme-project-select');
+    const projectName = select.value;
+
+    if (!projectName) {
+        alert('Please select a project');
+        return;
+    }
+
+    const btn = document.getElementById('btn-generate-readme');
+    const resultDiv = document.getElementById('generation-result');
+    const resultContent = document.getElementById('generation-result-content');
+
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+
+    try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectName)}/generate/readme`, { method: 'POST' });
+        const result = await response.json();
+
+        resultDiv.classList.remove('hidden');
+        resultContent.textContent = result.success
+            ? `README generated successfully for ${projectName}`
+            : `Error: ${result.message}`;
+    } catch (error) {
+        resultDiv.classList.remove('hidden');
+        resultContent.textContent = `Error: ${error.message}`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Generate README';
+    }
+}
+
+async function generateUsage() {
+    const select = document.getElementById('usage-project-select');
+    const projectName = select.value;
+
+    if (!projectName) {
+        alert('Please select a project');
+        return;
+    }
+
+    const btn = document.getElementById('btn-generate-usage');
+    const resultDiv = document.getElementById('generation-result');
+    const resultContent = document.getElementById('generation-result-content');
+
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+
+    try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectName)}/generate/usage`, { method: 'POST' });
+        const result = await response.json();
+
+        resultDiv.classList.remove('hidden');
+        resultContent.textContent = result.success
+            ? `USAGE generated successfully for ${projectName}`
+            : `Error: ${result.message}`;
+    } catch (error) {
+        resultDiv.classList.remove('hidden');
+        resultContent.textContent = `Error: ${error.message}`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Generate USAGE';
+    }
+}
+
+async function generateDocs(projectName) {
+    if (confirm(`Generate README and USAGE for ${projectName}?`)) {
+        const resultDiv = document.getElementById('generation-result');
+        const resultContent = document.getElementById('generation-result-content');
+
+        resultDiv.classList.remove('hidden');
+        resultContent.textContent = 'Generating documentation...';
+
+        try {
+            const readmeResponse = await fetch(`/api/projects/${encodeURIComponent(projectName)}/generate/readme`, { method: 'POST' });
+            const readmeResult = await readmeResponse.json();
+
+            const usageResponse = await fetch(`/api/projects/${encodeURIComponent(projectName)}/generate/usage`, { method: 'POST' });
+            const usageResult = await usageResponse.json();
+
+            resultContent.textContent = `README: ${readmeResult.message}\nUSAGE: ${usageResult.message}`;
+        } catch (error) {
+            resultContent.textContent = `Error: ${error.message}`;
+        }
+    }
+}
+</script>
+{% endblock %}

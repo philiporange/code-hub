@@ -97,10 +97,10 @@ def main():
                         help="Start server without indexing")
     parser.add_argument("--rebuild", action="store_true",
                         help="Rebuild all indexes from scratch")
-    parser.add_argument("--host", default="0.0.0.0",
-                        help="Server host (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8000,
-                        help="Server port (default: 8000)")
+    parser.add_argument("--host", default=settings.server_host,
+                        help=f"Server host (default: {settings.server_host})")
+    parser.add_argument("--port", type=int, default=settings.server_port,
+                        help=f"Server port (default: {settings.server_port})")
     args = parser.parse_args()
 
     # Ensure database is initialized

@@ -79,10 +79,15 @@ document.getElementById('search-input').addEventListener('keypress', function(e)
         <div class="text-gray-400 text-sm">Files</div>
         <div class="text-lg font-medium">{{ project.file_count }}</div>
     </div>
-    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+    <a href="/project/{{ project.name }}/stats" class="bg-gray-800 rounded-lg p-4 border border-gray-700 hover:bg-gray-700 hover:border-gray-600 transition-colors">
         <div class="text-gray-400 text-sm">Lines of Code</div>
-        <div class="text-lg font-medium">{{ "{:,}".format(project.lines_of_code) }}</div>
-    </div>
+        <div class="text-lg font-medium flex items-center gap-2">
+            {{ "{:,}".format(project.lines_of_code) }}
+            <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+            </svg>
+        </div>
+    </a>
     <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
         <div class="text-gray-400 text-sm">Git</div>
         <div class="text-lg font-medium">{{ 'Yes' if project.is_git_repo else 'No' }}</div>
