@@ -2,8 +2,9 @@
 
 Provides web UI and REST API for browsing projects, searching code, generating
 documentation, and managing project scanning. Includes admin functionality for
-initiating scans, viewing changed projects, and tracking LOC history.
-Supports live scan progress via Server-Sent Events (SSE).
+initiating scans, bulk-generating missing docs (README, USAGE, METADATA),
+viewing changed projects, and tracking LOC history. Long-running operations
+(scans, bulk generation) run in background threads with live progress via SSE.
 
 Scanning uses DocumentationGenerator.save_to_database() to properly load
 METADATA.json content (descriptions, keywords, modules, frameworks) into the
@@ -1158,6 +1159,178 @@ def _run_scan_in_background(scan_type: str, project_paths: List[Path] = None,
 class ScanOptions(BaseModel):
     """Options for scan operations."""
     regenerate_metadata: bool = False
+
+
+class GenerateMissingOptions(BaseModel):
+    """Options for bulk generation of missing docs."""
+    readme: bool = True
+    usage: bool = True
+    metadata: bool = True
+
+
+def _run_generate_missing_in_background(gen_readme: bool, gen_usage: bool, gen_metadata: bool):
+    """Generate missing documentation files for all projects.
+
+    Iterates over all projects in the database, checks which doc files are
+    missing on disk, and uses Claude to generate them. Progress is reported
+    via the shared scan_manager for SSE streaming to the admin UI.
+    """
+    from code_hub.claude_wrapper import ClaudeWrapper
+    from code_hub.generator import DocumentationGenerator
+    from code_hub.scanner import ProjectScanner
+
+    try:
+        claude = ClaudeWrapper()
+    except Exception as e:
+        scan_manager.add_error(f"Could not initialize Claude: {e}")
+        scan_manager.complete_scan(success=False)
+        return
+
+    generator = DocumentationGenerator()
+    scanner = ProjectScanner()
+
+    projects = list(Project.select().order_by(Project.name))
+    total = len(projects)
+    scan_manager.update_progress(total_projects=total, log_message=f"Checking {total} projects for missing docs")
+
+    generated_count = 0
+    errors = []
+
+    for i, project in enumerate(projects):
+        project_path = Path(project.path)
+        project_name = project.name
+
+        if not project_path.exists():
+            scan_manager.update_progress(
+                scanned_count=i + 1,
+                current_project=project_name,
+                log_message=f"  Skipping {project_name}: path not found"
+            )
+            continue
+
+        # Determine what's missing
+        needs_readme = gen_readme and not (project_path / 'README.md').exists()
+        needs_usage = gen_usage and not (project_path / 'USAGE.md').exists()
+        needs_metadata = gen_metadata and not (project_path / 'METADATA.json').exists()
+
+        if not needs_readme and not needs_usage and not needs_metadata:
+            scan_manager.update_progress(
+                scanned_count=i + 1,
+                current_project=project_name
+            )
+            continue
+
+        missing = []
+        if needs_readme:
+            missing.append("README")
+        if needs_usage:
+            missing.append("USAGE")
+        if needs_metadata:
+            missing.append("METADATA")
+
+        scan_manager.update_progress(
+            scanned_count=i,
+            current_project=project_name,
+            log_message=f"Generating {', '.join(missing)} for {project_name}..."
+        )
+
+        # Generate METADATA first (fastest, needed for DB update)
+        if needs_metadata:
+            try:
+                response = claude.generate_metadata(project_path)
+                if response.success and response.content.strip():
+                    metadata = json.loads(response.content)
+                    (project_path / 'METADATA.json').write_text(json.dumps(metadata, indent=2))
+                    scan_manager.update_progress(log_message=f"  METADATA saved for {project_name}")
+                    generated_count += 1
+                else:
+                    scan_manager.update_progress(
+                        log_message=f"  METADATA failed for {project_name}: {response.error or 'Empty response'}",
+                        level="warning"
+                    )
+            except Exception as e:
+                error_msg = f"{project_name} METADATA: {e}"
+                errors.append(error_msg)
+                scan_manager.add_error(error_msg)
+
+        if needs_readme:
+            try:
+                response = claude.generate_readme(project_path)
+                if response.success and response.content.strip():
+                    content = generator._clean_markdown_content(response.content)
+                    (project_path / 'README.md').write_text(content)
+                    scan_manager.update_progress(log_message=f"  README saved for {project_name}")
+                    generated_count += 1
+                else:
+                    scan_manager.update_progress(
+                        log_message=f"  README failed for {project_name}: {response.error or 'Empty response'}",
+                        level="warning"
+                    )
+            except Exception as e:
+                error_msg = f"{project_name} README: {e}"
+                errors.append(error_msg)
+                scan_manager.add_error(error_msg)
+
+        if needs_usage:
+            try:
+                response = claude.generate_usage(project_path)
+                if response.success and response.content.strip():
+                    content = generator._clean_markdown_content(response.content)
+                    (project_path / 'USAGE.md').write_text(content)
+                    scan_manager.update_progress(log_message=f"  USAGE saved for {project_name}")
+                    generated_count += 1
+                else:
+                    scan_manager.update_progress(
+                        log_message=f"  USAGE failed for {project_name}: {response.error or 'Empty response'}",
+                        level="warning"
+                    )
+            except Exception as e:
+                error_msg = f"{project_name} USAGE: {e}"
+                errors.append(error_msg)
+                scan_manager.add_error(error_msg)
+
+        # Re-scan and update DB so new docs are indexed
+        try:
+            scanned = scanner.scan_project(project_path)
+            generator.save_to_database(scanned)
+        except Exception as e:
+            scan_manager.update_progress(
+                log_message=f"  DB update failed for {project_name}: {e}",
+                level="warning"
+            )
+
+        scan_manager.update_progress(scanned_count=i + 1, current_project=project_name)
+
+    scan_manager.update_progress(
+        scanned_count=total,
+        current_project="",
+        log_message=f"Generation complete: {generated_count} files generated, {len(errors)} errors"
+    )
+    scan_manager.complete_scan(success=len(errors) == 0)
+
+
+@app.post("/api/admin/generate/missing")
+async def trigger_generate_missing(options: Optional[GenerateMissingOptions] = None):
+    """Generate all missing documentation files across projects (background)."""
+    if scan_manager.is_running():
+        raise HTTPException(status_code=409, detail="A task is already in progress")
+
+    opts = options or GenerateMissingOptions()
+    if not opts.readme and not opts.usage and not opts.metadata:
+        raise HTTPException(status_code=400, detail="At least one doc type must be selected")
+
+    # Count projects with missing docs
+    total = Project.select().count()
+    scan_manager.start_scan("generate", total_projects=total)
+
+    thread = threading.Thread(
+        target=_run_generate_missing_in_background,
+        args=(opts.readme, opts.usage, opts.metadata),
+        daemon=True
+    )
+    thread.start()
+
+    return {"message": "Generation started", "scan_id": scan_manager.current_scan.scan_id}
 
 
 @app.post("/api/admin/scan/incremental")
