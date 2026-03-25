@@ -533,7 +533,7 @@ class GenerateResponse(BaseModel):
 
 
 @app.post("/api/projects/{name}/generate/readme", response_model=GenerateResponse)
-async def generate_readme(name: str):
+def generate_readme(name: str):
     """Generate README.md for a project using Claude."""
     from code_hub.claude_wrapper import ClaudeWrapper
     from code_hub.generator import DocumentationGenerator
@@ -585,7 +585,7 @@ async def generate_readme(name: str):
 
 
 @app.post("/api/projects/{name}/generate/usage", response_model=GenerateResponse)
-async def generate_usage(name: str):
+def generate_usage(name: str):
     """Generate USAGE.md for a project using Claude."""
     from code_hub.claude_wrapper import ClaudeWrapper
     from code_hub.generator import DocumentationGenerator
