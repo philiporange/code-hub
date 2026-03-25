@@ -512,6 +512,8 @@ def get_changed_projects(base_path: Path = None) -> List[tuple[Path, datetime]]:
 
     Returns list of (project_path, last_modified) tuples for projects
     where filesystem mtime is newer than the database scanned_at timestamp.
+    Looks up projects by name (stable unique key) rather than path to avoid
+    mismatches from symlink resolution or path normalization differences.
     """
     from code_hub.models import Project, db
 
@@ -519,12 +521,11 @@ def get_changed_projects(base_path: Path = None) -> List[tuple[Path, datetime]]:
     changed = []
 
     with db:
-        # Get all known projects with their scan times
-        known_projects = {p.path: p.scanned_at for p in Project.select(Project.path, Project.scanned_at)}
+        # Get all known projects with their scan times, keyed by name
+        known_projects = {p.name: p.scanned_at for p in Project.select(Project.name, Project.scanned_at)}
 
     for project_path in scanner.discover_projects():
-        path_str = str(project_path)
-        scanned_at = known_projects.get(path_str)
+        scanned_at = known_projects.get(project_path.name)
 
         # Get latest modification time from the project directory
         latest_mtime = _get_project_mtime(project_path, scanner.exclude_patterns)
@@ -623,12 +624,13 @@ def scan_changed_projects(base_path: Path = None, triggered_by: str = "manual") 
             path_str = str(project_path)
 
             with db.atomic():
-                # Check if project exists
+                # Look up by name (stable unique key) to avoid path mismatch issues
                 try:
-                    project = Project.get(Project.path == path_str)
+                    project = Project.get(Project.name == scanned.name)
                     old_loc = project.lines_of_code
 
-                    # Update existing project
+                    # Update existing project (including path in case it changed)
+                    project.path = path_str
                     project.file_count = scanned.stats.file_count
                     project.lines_of_code = scanned.stats.lines_of_code
                     project.size_bytes = scanned.stats.size_bytes
