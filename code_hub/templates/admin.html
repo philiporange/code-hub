@@ -234,6 +234,31 @@
     <!-- Documentation Generation -->
     <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
         <h2 class="text-xl font-semibold mb-4">Generate Documentation</h2>
+
+        <!-- Generate All Missing -->
+        <div class="bg-gray-700 rounded-lg p-4 mb-4">
+            <h3 class="font-medium mb-2">Generate All Missing</h3>
+            <p class="text-sm text-gray-400 mb-3">Use Claude to generate missing documentation for all projects</p>
+            <div class="flex flex-wrap gap-4 mb-3">
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="gen-readme" checked class="w-4 h-4 rounded bg-gray-600 border-gray-500 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-800">
+                    <span class="text-sm">README.md</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="gen-usage" checked class="w-4 h-4 rounded bg-gray-600 border-gray-500 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-800">
+                    <span class="text-sm">USAGE.md</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="gen-metadata" checked class="w-4 h-4 rounded bg-gray-600 border-gray-500 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-800">
+                    <span class="text-sm">METADATA.json</span>
+                </label>
+            </div>
+            <button onclick="generateAllMissing()" id="btn-generate-all"
+                    class="bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded text-sm w-full disabled:opacity-50 disabled:cursor-not-allowed">
+                Generate All Missing Docs
+            </button>
+        </div>
+
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="bg-gray-700 rounded-lg p-4">
                 <h3 class="font-medium mb-2">Generate README.md</h3>
@@ -627,6 +652,54 @@ async function generateUsage() {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Generate USAGE';
+    }
+}
+
+async function generateAllMissing() {
+    if (scanRunning) {
+        alert('A task is already in progress');
+        return;
+    }
+
+    const options = {
+        readme: document.getElementById('gen-readme').checked,
+        usage: document.getElementById('gen-usage').checked,
+        metadata: document.getElementById('gen-metadata').checked
+    };
+
+    if (!options.readme && !options.usage && !options.metadata) {
+        alert('Select at least one doc type');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/admin/generate/missing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(options)
+        });
+
+        if (response.status === 409) {
+            alert('A task is already in progress');
+            return;
+        }
+
+        const result = await response.json();
+
+        showScanProgress({
+            scan_type: 'generate',
+            status: 'running',
+            scanned_count: 0,
+            total_projects: 0,
+            current_project: 'Starting...',
+            progress_percent: 0,
+            error_count: 0
+        });
+
+        connectToSSE();
+
+    } catch (error) {
+        alert(`Error starting generation: ${error.message}`);
     }
 }
 
