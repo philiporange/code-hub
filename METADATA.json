@@ -1,7 +1,7 @@
 {
   "name": "code-hub",
   "short_description": "Self-documenting code project management system using Claude AI for automated documentation generation and semantic search.",
-  "long_description": "Code Hub is a comprehensive project management and documentation system that scans your codebase, uses Claude AI to automatically generate README.md, METADATA.json, and USAGE.md files, and provides a web interface with full-text and semantic search capabilities. It maintains a SQLite database with FTS5 indexes and ChromaDB vector embeddings for intelligent project discovery across your entire ~/Code directory.",
+  "long_description": "Code Hub is a comprehensive project management and documentation system that scans your codebase directory, uses Claude Code in headless mode to automatically generate README.md, METADATA.json, and USAGE.md files for projects, and provides a web interface with full-text and semantic search capabilities. It maintains a SQLite database with FTS5 indexes and ChromaDB vector embeddings for intelligent project discovery and exploration. The system includes a REST API, file browser, code viewer with syntax highlighting, and deep code search capabilities across your entire ~/Code directory.",
   "keywords": [
     "project-management",
     "documentation-generation",
@@ -17,7 +17,10 @@
     "sqlite",
     "chromadb",
     "rag",
-    "llm"
+    "llm",
+    "vector-search",
+    "full-text-search",
+    "automation"
   ],
   "primary_language": "python",
   "languages": [
@@ -28,13 +31,13 @@
   ],
   "frameworks": [
     "fastapi",
+    "uvicorn",
     "pydantic",
     "peewee",
     "chromadb",
     "sentence-transformers",
     "click",
-    "jinja2",
-    "uvicorn"
+    "jinja2"
   ],
   "modules": [
     {
@@ -81,20 +84,11 @@
       "name": "config",
       "path": "code_hub/config.py",
       "description": "Pydantic-based configuration management with environment variable support for paths, Claude models, and server settings."
+    },
+    {
+      "name": "scheduler",
+      "path": "code_hub/scheduler.py",
+      "description": "Scheduling system for periodic scanning, generation, and indexing tasks to keep the project database up to date."
     }
-  ],
-  "git": {
-    "is_repo": false,
-    "remote_url": null,
-    "github_name": null,
-    "default_branch": null,
-    "last_commit": null
-  },
-  "stats": {
-    "files": 53,
-    "lines_of_code": 3063,
-    "size_bytes": 283325
-  },
-  "generated_at": "2025-12-06T19:32:11.013665",
-  "generator_version": "1.0.0"
+  ]
 }

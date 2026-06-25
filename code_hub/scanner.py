@@ -3,15 +3,18 @@
 Discovers projects in ~/Code directory by looking for project markers (git repos,
 package files, etc). Scans projects to extract stats, languages, git info, and files.
 Supports incremental scanning by detecting which projects have changed since last scan.
-Records LOC history for tracking code growth over time.
+Detects renamed project folders by matching git remote URLs against stale DB records.
+Records LOC history for tracking code growth over time. Uses get_or_create pattern
+to safely handle concurrent scans and avoid UNIQUE constraint violations.
 """
 import json
+import logging
 import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Iterator
+from typing import Callable, List, Optional, Dict, Any, Iterator
 from fnmatch import fnmatch
 
 # tomllib is Python 3.11+, fallback to tomli for older versions
@@ -24,6 +27,8 @@ except ImportError:
         tomllib = None
 
 from code_hub.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -507,6 +512,114 @@ def scan_all_projects(base_path: Path = None) -> List[ScannedProject]:
     return projects
 
 
+def _get_git_remote(path: Path) -> Optional[str]:
+    """Get the git remote origin URL for a directory."""
+    try:
+        result = subprocess.run(
+            ['git', 'remote', 'get-url', 'origin'],
+            cwd=path, capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, Exception):
+        pass
+    return None
+
+
+def detect_and_apply_renames(
+    base_path: Path = None,
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> tuple[List[tuple[str, str]], List[str]]:
+    """Detect renamed project folders, update DB records, and remove orphans.
+
+    Finds DB projects whose paths no longer exist on disk, then tries to match
+    them to newly discovered projects using git remote URL. When a match is
+    found, updates the DB record's name and path so all associated data
+    (modules, keywords, LOC history, etc.) is preserved. Any stale projects
+    that couldn't be matched are deleted from the database.
+
+    Returns (renames, removed) where renames is a list of (old_name, new_name)
+    tuples and removed is a list of deleted project names.
+    """
+    from code_hub.models import Project, ProjectFTS, db
+
+    scanner = ProjectScanner(base_path=base_path)
+    renames = []
+    removed = []
+
+    with db:
+        # Find DB projects whose paths no longer exist on disk
+        stale_projects = [
+            p for p in Project.select()
+            if not Path(p.path).exists()
+        ]
+
+        if not stale_projects:
+            return renames, removed
+
+        # Build a map of remote_url -> stale project for those with git remotes
+        stale_by_remote: Dict[str, Project] = {}
+        for project in stale_projects:
+            if project.git_remote_url:
+                stale_by_remote[project.git_remote_url] = project
+
+        # Try to match stale projects to new folders by git remote
+        renamed_names = set()
+        if stale_by_remote:
+            known_names = {p.name for p in Project.select(Project.name)}
+
+            for disk_path in scanner.discover_projects():
+                if disk_path.name in known_names:
+                    continue
+
+                remote = _get_git_remote(disk_path)
+                if not remote or remote not in stale_by_remote:
+                    continue
+
+                stale = stale_by_remote.pop(remote)
+                old_name = stale.name
+                new_name = disk_path.name
+
+                stale.name = new_name
+                stale.path = str(disk_path)
+                stale.save()
+
+                renames.append((old_name, new_name))
+                renamed_names.add(new_name)
+                known_names.discard(old_name)
+                known_names.add(new_name)
+
+                msg = f"Detected rename: {old_name} -> {new_name}"
+                logger.info(msg)
+                if log_fn:
+                    log_fn(msg)
+
+                if not stale_by_remote:
+                    break
+
+        # Remove orphan projects that couldn't be matched.
+        # CASCADE on foreign keys handles related rows (modules, files,
+        # keywords, vectors, LOC history). FTS entries use rowid=project.id
+        # and must be deleted separately.
+        for project in stale_projects:
+            if project.name in renamed_names:
+                continue
+            if Path(project.path).exists():
+                continue
+
+            name = project.name
+            ProjectFTS.delete().where(ProjectFTS.rowid == project.id).execute()
+            project.delete_instance()
+            removed.append(name)
+
+            msg = f"Removed orphan project: {name}"
+            logger.info(msg)
+            if log_fn:
+                log_fn(msg)
+
+    return renames, removed
+
+
 def get_changed_projects(base_path: Path = None) -> List[tuple[Path, datetime]]:
     """Find projects that have changed since their last scan.
 
@@ -606,6 +719,9 @@ def scan_changed_projects(base_path: Path = None, triggered_by: str = "manual") 
 
     create_tables()
 
+    # Detect renames and remove orphan projects before scanning
+    renames, removed = detect_and_apply_renames(base_path)
+
     scanner = ProjectScanner(base_path=base_path)
     changed = get_changed_projects(base_path)
 
@@ -625,8 +741,29 @@ def scan_changed_projects(base_path: Path = None, triggered_by: str = "manual") 
 
             with db.atomic():
                 # Look up by name (stable unique key) to avoid path mismatch issues
-                try:
-                    project = Project.get(Project.name == scanned.name)
+                # Use get_or_create to avoid UNIQUE constraint errors
+                project, created = Project.get_or_create(
+                    name=scanned.name,
+                    defaults={
+                        'path': path_str,
+                        'file_count': scanned.stats.file_count,
+                        'lines_of_code': scanned.stats.lines_of_code,
+                        'size_bytes': scanned.stats.size_bytes,
+                        'languages': json.dumps(scanned.languages),
+                        'primary_language': scanned.languages[0] if scanned.languages else None,
+                        'is_git_repo': scanned.git.is_repo,
+                        'git_remote_url': scanned.git.remote_url,
+                        'github_name': scanned.git.github_name,
+                        'default_branch': scanned.git.default_branch,
+                        'last_commit_at': scanned.git.last_commit_at,
+                        'project_created_at': scanned.project_created_at,
+                        'last_code_modified_at': scanned.last_code_modified_at,
+                        'scanned_at': datetime.now()
+                    }
+                )
+
+                # If project already existed, update it
+                if not created:
                     old_loc = project.lines_of_code
 
                     # Update existing project (including path in case it changed)
@@ -654,28 +791,8 @@ def scan_changed_projects(base_path: Path = None, triggered_by: str = "manual") 
                             lines_of_code=project.lines_of_code,
                             file_count=project.file_count
                         )
-
-                except Project.DoesNotExist:
-                    # Create new project
-                    project = Project.create(
-                        name=scanned.name,
-                        path=path_str,
-                        file_count=scanned.stats.file_count,
-                        lines_of_code=scanned.stats.lines_of_code,
-                        size_bytes=scanned.stats.size_bytes,
-                        languages=json.dumps(scanned.languages),
-                        primary_language=scanned.languages[0] if scanned.languages else None,
-                        is_git_repo=scanned.git.is_repo,
-                        git_remote_url=scanned.git.remote_url,
-                        github_name=scanned.git.github_name,
-                        default_branch=scanned.git.default_branch,
-                        last_commit_at=scanned.git.last_commit_at,
-                        project_created_at=scanned.project_created_at,
-                        last_code_modified_at=scanned.last_code_modified_at,
-                        scanned_at=datetime.now()
-                    )
-
-                    # Record initial LOC
+                else:
+                    # Record initial LOC for new project
                     LOCHistory.create(
                         project=project,
                         lines_of_code=project.lines_of_code,
@@ -698,6 +815,8 @@ def scan_changed_projects(base_path: Path = None, triggered_by: str = "manual") 
         "scan_type": "incremental",
         "projects_found": len(changed),
         "projects_scanned": scanned_count,
+        "projects_renamed": renames,
+        "projects_removed": removed,
         "errors": errors,
         "triggered_by": triggered_by
     }

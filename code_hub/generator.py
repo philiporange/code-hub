@@ -1,4 +1,9 @@
-"""Documentation generation orchestrator."""
+"""Documentation generation orchestrator.
+
+Generates README, METADATA.json, and USAGE documentation for projects using Claude.
+Handles parsing Claude responses, saving files, and updating database records.
+Uses atomic database operations to avoid race conditions during concurrent operations.
+"""
 import json
 import re
 from datetime import datetime
@@ -341,9 +346,10 @@ class DocumentationGenerator:
 
                 # Update keyword counts
                 for kw in Keyword.select():
-                    kw.count = ProjectKeyword.select().where(
+                    count_value = ProjectKeyword.select().where(
                         ProjectKeyword.keyword == kw
                     ).count()
+                    kw.count = count_value
                     kw.save()
             else:
                 db_project.set_languages(project.languages)

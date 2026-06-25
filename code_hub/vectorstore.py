@@ -1,7 +1,14 @@
-"""Vector embeddings and similarity search using ChromaDB."""
+"""Vector embeddings and similarity search using ChromaDB.
+
+This module stores project and module embeddings in persistent ChromaDB
+collections, generates query embeddings with sentence-transformers, and fails
+closed when optional embedding dependencies are unavailable so non-vector
+search modes can continue working.
+"""
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
 import logging
+import os
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -18,6 +25,12 @@ def get_embedding_model():
     """Lazy-load the sentence transformer model."""
     global _embedding_model
     if _embedding_model is None:
+        # sentence-transformers only needs PyTorch here. Prevent transformers
+        # from importing optional TensorFlow/Flax stacks that may be installed
+        # but incompatible with the local protobuf/numpy environment.
+        os.environ.setdefault("USE_TF", "0")
+        os.environ.setdefault("USE_FLAX", "0")
+        os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
         from sentence_transformers import SentenceTransformer
         logger.info(f"Loading embedding model: {settings.embedding_model}")
         _embedding_model = SentenceTransformer(settings.embedding_model)
@@ -144,13 +157,12 @@ class VectorStore:
         Returns:
             List of (project_id, similarity_score, metadata) tuples
         """
-        query_embedding = self.embed([query])[0]
-
         where = None
         if keyword_filter:
             where = {"keywords": {"$contains": keyword_filter.lower()}}
 
         try:
+            query_embedding = self.embed([query])[0]
             results = self.projects.query(
                 query_embeddings=[query_embedding],
                 n_results=n_results,
@@ -158,7 +170,7 @@ class VectorStore:
                 include=["metadatas", "distances", "documents"]
             )
         except Exception as e:
-            logger.error(f"Search error: {e}")
+            logger.warning(f"Semantic project search unavailable: {e}")
             return []
 
         output = []
@@ -180,13 +192,12 @@ class VectorStore:
         project_id: Optional[str] = None
     ) -> List[Tuple[str, float, Dict[str, Any]]]:
         """Search for similar modules."""
-        query_embedding = self.embed([query])[0]
-
         where = None
         if project_id:
             where = {"project_id": project_id}
 
         try:
+            query_embedding = self.embed([query])[0]
             results = self.modules.query(
                 query_embeddings=[query_embedding],
                 n_results=n_results,
@@ -194,7 +205,7 @@ class VectorStore:
                 include=["metadatas", "distances"]
             )
         except Exception as e:
-            logger.error(f"Module search error: {e}")
+            logger.warning(f"Semantic module search unavailable: {e}")
             return []
 
         output = []

@@ -980,7 +980,7 @@ def _run_scan_in_background(scan_type: str, project_paths: List[Path] = None,
         single_project: Name of single project to scan
         regenerate_metadata: Whether to regenerate METADATA.json for scanned projects
     """
-    from code_hub.scanner import ProjectScanner, get_changed_projects
+    from code_hub.scanner import ProjectScanner, get_changed_projects, detect_and_apply_renames
     from code_hub.generator import DocumentationGenerator
     from code_hub.models import Project, LOCHistory, ScanLog
 
@@ -994,6 +994,11 @@ def _run_scan_in_background(scan_type: str, project_paths: List[Path] = None,
         except Exception as e:
             scan_manager.update_progress(log_message=f"Warning: Could not initialize Claude: {e}", level="warning")
             regenerate_metadata = False
+
+    # Detect renames and remove orphan projects before scanning
+    renames, removed = detect_and_apply_renames(
+        log_fn=lambda msg: scan_manager.update_progress(log_message=msg)
+    )
 
     scanner = ProjectScanner()
     generator = DocumentationGenerator()

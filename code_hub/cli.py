@@ -41,13 +41,20 @@ def cli(ctx, verbose):
 @click.option('--save/--no-save', default=True, help='Save results to database')
 def scan(path, save):
     """Scan directory for projects and save to database."""
-    from code_hub.scanner import ProjectScanner
+    from code_hub.scanner import ProjectScanner, detect_and_apply_renames
     from code_hub.generator import DocumentationGenerator
     from code_hub.models import create_tables, db
 
     if save:
         db.connect(reuse_if_open=True)
         create_tables()
+
+        # Detect renames and remove orphan projects before scanning
+        renames, removed = detect_and_apply_renames(base_path=path if path else None)
+        for old_name, new_name in renames:
+            console.print(f"[yellow]Renamed:[/yellow] {old_name} -> {new_name}")
+        for name in removed:
+            console.print(f"[red]Removed:[/red] {name} (no longer on disk)")
 
     scanner = ProjectScanner(base_path=path if path else None)
     generator = DocumentationGenerator() if save else None

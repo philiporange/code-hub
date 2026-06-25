@@ -22,11 +22,13 @@ def test_scanner_functions_import():
     from code_hub.scanner import (
         get_changed_projects,
         scan_changed_projects,
-        record_loc_history
+        record_loc_history,
+        detect_and_apply_renames
     )
     assert get_changed_projects is not None
     assert scan_changed_projects is not None
     assert record_loc_history is not None
+    assert detect_and_apply_renames is not None
 
 
 def test_scheduler_import():

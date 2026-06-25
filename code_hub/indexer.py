@@ -1,4 +1,10 @@
-"""Full-text and vector indexing for projects."""
+"""Full-text and vector indexing for projects.
+
+The indexer writes SQLite FTS rows and ChromaDB vector embeddings for projects,
+then exposes full-text, semantic, and hybrid search. Hybrid search treats the
+semantic index as optional so FTS results remain available if embedding
+dependencies or vector storage are temporarily unavailable.
+"""
 import logging
 from datetime import datetime
 from typing import Optional, Callable, List, Tuple
@@ -168,8 +174,12 @@ class Indexer:
         limit: int = 10
     ) -> List[Tuple[Project, float]]:
         """Perform semantic similarity search."""
-        vs = self._get_vector_store()
-        results = vs.search_projects(query, n_results=limit)
+        try:
+            vs = self._get_vector_store()
+            results = vs.search_projects(query, n_results=limit)
+        except Exception as e:
+            logger.warning(f"Semantic search unavailable: {e}")
+            return []
 
         if not results:
             return []
@@ -201,8 +211,13 @@ class Indexer:
             # Higher rank = higher score (inverse of position)
             fts_scores[p.id] = 1.0 - (i / max(len(fts_results), 1))
 
-        # Get semantic results
-        semantic_results = self.search_semantic(query, limit=limit * 2)
+        # Get semantic results. Semantic search depends on optional ML
+        # packages, so keep hybrid search useful when that stack is unavailable.
+        try:
+            semantic_results = self.search_semantic(query, limit=limit * 2)
+        except Exception as e:
+            logger.warning(f"Hybrid semantic search unavailable: {e}")
+            semantic_results = []
         semantic_scores = {p.id: score for p, score in semantic_results}
 
         # Combine scores
@@ -234,8 +249,6 @@ class Indexer:
         project_name: Optional[str] = None
     ) -> List[Tuple[Module, float]]:
         """Search for modules by description."""
-        vs = self._get_vector_store()
-
         project_id = None
         if project_name:
             try:
@@ -244,7 +257,12 @@ class Indexer:
             except Project.DoesNotExist:
                 pass
 
-        results = vs.search_modules(query, n_results=limit, project_id=project_id)
+        try:
+            vs = self._get_vector_store()
+            results = vs.search_modules(query, n_results=limit, project_id=project_id)
+        except Exception as e:
+            logger.warning(f"Semantic module search unavailable: {e}")
+            return []
 
         if not results:
             return []
