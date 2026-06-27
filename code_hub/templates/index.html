@@ -52,11 +52,17 @@
                         {% if project.primary_language %}
                         <span class="text-xs text-gray-500 ml-2">{{ project.primary_language }}</span>
                         {% endif %}
+                        {% if project.github_name %}
+                        <i class="fab fa-github text-gray-500 ml-1" title="{{ project.github_name }}"></i>
+                        {% endif %}
                     </div>
                     <span class="text-gray-500 text-sm">{{ project.lines_of_code|default(0) }} loc</span>
                 </div>
                 {% if project.short_description %}
                 <p class="text-gray-400 text-sm mt-1 truncate">{{ project.short_description }}</p>
+                {% endif %}
+                {% if project.last_commit_at %}
+                <p class="text-xs text-gray-600 mt-1">Updated {{ format_relative_time(project.last_commit_at) }}</p>
                 {% endif %}
             </a>
             {% endfor %}

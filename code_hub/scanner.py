@@ -1,11 +1,12 @@
 """Project discovery and analysis.
 
 Discovers projects in ~/Code directory by looking for project markers (git repos,
-package files, etc). Scans projects to extract stats, languages, git info, and files.
-Supports incremental scanning by detecting which projects have changed since last scan.
-Detects renamed project folders by matching git remote URLs against stale DB records.
-Records LOC history for tracking code growth over time. Uses get_or_create pattern
-to safely handle concurrent scans and avoid UNIQUE constraint violations.
+package files, etc). Scans projects to extract stats, languages, git info, recent
+commit history, and files. Supports incremental scanning by detecting which projects
+have changed since last scan. Detects renamed project folders by matching git remote
+URLs against stale DB records. Records LOC history for tracking code growth over time.
+Uses get_or_create pattern to safely handle concurrent scans and avoid UNIQUE
+constraint violations.
 """
 import json
 import logging
@@ -30,6 +31,19 @@ from code_hub.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Number of recent commits to capture per project for the update history
+RECENT_COMMITS_LIMIT = 15
+
+
+@dataclass
+class CommitInfo:
+    """A single git commit."""
+    sha: str
+    short_sha: str
+    message: str
+    author: Optional[str] = None
+    committed_at: Optional[datetime] = None
+
 
 @dataclass
 class GitInfo:
@@ -39,6 +53,7 @@ class GitInfo:
     github_name: Optional[str] = None
     default_branch: Optional[str] = None
     last_commit_at: Optional[datetime] = None
+    commits: List[CommitInfo] = field(default_factory=list)
 
 
 @dataclass
@@ -262,25 +277,52 @@ class ProjectScanner:
             if result.returncode == 0:
                 info.default_branch = result.stdout.strip()
 
-            # Get last commit time
+            # Get recent commit history (newest first). A unit-separator (\x1f)
+            # delimits fields so commit subjects can contain any character.
             result = subprocess.run(
-                ['git', 'log', '-1', '--format=%cI'],
+                ['git', 'log', f'-{RECENT_COMMITS_LIMIT}',
+                 '--format=%H%x1f%h%x1f%an%x1f%cI%x1f%s'],
                 cwd=path, capture_output=True, text=True, timeout=5
             )
-            if result.returncode == 0 and result.stdout.strip():
-                try:
-                    # Handle timezone format variations
-                    timestamp = result.stdout.strip()
-                    info.last_commit_at = datetime.fromisoformat(
-                        timestamp.replace('Z', '+00:00')
-                    )
-                except ValueError:
-                    pass
+            if result.returncode == 0:
+                info.commits = self._parse_commits(result.stdout)
+
+            # Last commit time comes from the most recent commit we captured
+            if info.commits:
+                info.last_commit_at = info.commits[0].committed_at
 
         except (subprocess.TimeoutExpired, Exception):
             pass
 
         return info
+
+    @staticmethod
+    def _parse_commits(log_output: str) -> List[CommitInfo]:
+        """Parse `git log` output into CommitInfo records."""
+        commits: List[CommitInfo] = []
+        for line in log_output.splitlines():
+            if not line.strip():
+                continue
+            parts = line.split('\x1f')
+            if len(parts) != 5:
+                continue
+            sha, short_sha, author, date_str, subject = parts
+            committed_at = None
+            try:
+                parsed = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                # Normalize to naive local time, matching file mtimes, so the
+                # value round-trips through SQLite as a datetime rather than a str
+                committed_at = parsed.astimezone().replace(tzinfo=None)
+            except ValueError:
+                pass
+            commits.append(CommitInfo(
+                sha=sha,
+                short_sha=short_sha,
+                message=subject,
+                author=author or None,
+                committed_at=committed_at
+            ))
+        return commits
 
     def _analyze_files(self, path: Path) -> tuple[ProjectStats, List[str]]:
         """Analyze files in project."""
@@ -693,6 +735,27 @@ def _get_project_mtime(path: Path, exclude_patterns: List[str]) -> Optional[date
     return latest
 
 
+def replace_project_commits(db_project, commits: List[CommitInfo]) -> None:
+    """Replace a project's stored commits with the latest scanned set.
+
+    Deletes existing GitCommit rows for the project and recreates them from the
+    freshly scanned commit history. Must be called within an open database
+    context (e.g. inside a db.atomic() block).
+    """
+    from code_hub.models import GitCommit
+
+    GitCommit.delete().where(GitCommit.project == db_project).execute()
+    for commit in commits:
+        GitCommit.create(
+            project=db_project,
+            sha=commit.sha,
+            short_sha=commit.short_sha,
+            message=commit.message,
+            author=commit.author,
+            committed_at=commit.committed_at
+        )
+
+
 def record_loc_history(project_name: str) -> None:
     """Record current LOC stats for a project in history table."""
     from code_hub.models import Project, LOCHistory, db
@@ -798,6 +861,9 @@ def scan_changed_projects(base_path: Path = None, triggered_by: str = "manual") 
                         lines_of_code=project.lines_of_code,
                         file_count=project.file_count
                     )
+
+                # Refresh stored commit history
+                replace_project_commits(project, scanned.git.commits)
 
             scanned_count += 1
 

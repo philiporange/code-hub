@@ -1,8 +1,8 @@
 """Peewee ORM models for Code Hub.
 
 Defines database models for projects, modules, files, keywords, dependencies,
-vector embeddings, LOC history tracking, and scan logs. Uses SQLite with FTS5
-for full-text search capabilities.
+git commit history, vector embeddings, LOC history tracking, and scan logs.
+Uses SQLite with FTS5 for full-text search capabilities.
 """
 import json
 from datetime import datetime
@@ -154,6 +154,23 @@ class ProjectFile(BaseModel):
         )
 
 
+class GitCommit(BaseModel):
+    """A recent git commit, used to show update activity on a project view."""
+
+    project = ForeignKeyField(Project, backref='commits', on_delete='CASCADE')
+    sha = CharField()  # Full commit hash
+    short_sha = CharField()  # Abbreviated hash
+    message = TextField(default="")  # Commit subject (first line)
+    author = CharField(null=True)
+    committed_at = DateTimeField(null=True, index=True)
+
+    class Meta:
+        table_name = 'git_commits'
+        indexes = (
+            (('project', 'sha'), True),  # Unique together
+        )
+
+
 class Keyword(BaseModel):
     """Normalized keywords for tagging projects."""
 
@@ -262,7 +279,7 @@ def create_tables():
     """Create all database tables."""
     with db:
         db.create_tables([
-            Project, Module, ProjectFile, Keyword, ProjectKeyword,
+            Project, Module, ProjectFile, GitCommit, Keyword, ProjectKeyword,
             Dependency, ProjectVector, LOCHistory, ScanLog, ProjectFTS
         ], safe=True)
 
@@ -272,7 +289,7 @@ def drop_tables():
     with db:
         db.drop_tables([
             ProjectFTS, ScanLog, LOCHistory, ProjectVector, Dependency,
-            ProjectKeyword, Keyword, ProjectFile, Module, Project
+            ProjectKeyword, Keyword, GitCommit, ProjectFile, Module, Project
         ], safe=True)
 
 

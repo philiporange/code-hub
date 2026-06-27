@@ -90,7 +90,14 @@ document.getElementById('search-input').addEventListener('keypress', function(e)
     </a>
     <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
         <div class="text-gray-400 text-sm">Git</div>
-        <div class="text-lg font-medium">{{ 'Yes' if project.is_git_repo else 'No' }}</div>
+        {% if project.is_git_repo %}
+        <div class="text-lg font-medium">{{ project.default_branch or 'repo' }}</div>
+        {% if project.last_commit_at %}
+        <div class="text-xs text-gray-500">{{ format_relative_time(project.last_commit_at) }}</div>
+        {% endif %}
+        {% else %}
+        <div class="text-lg font-medium">No</div>
+        {% endif %}
     </div>
 </div>
 
@@ -137,6 +144,42 @@ document.getElementById('search-input').addEventListener('keypress', function(e)
         </div>
     </div>
     {% endif %}
+</div>
+{% endif %}
+
+<!-- Recent Updates (git commits) -->
+{% if commits %}
+<div class="mb-8">
+    <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold">Recent Updates</h2>
+        {% if github_url %}
+        <a href="{{ github_url }}/commits" target="_blank" class="text-sm text-blue-400 hover:underline">
+            View all on GitHub
+        </a>
+        {% endif %}
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 divide-y divide-gray-700">
+        {% for commit in commits %}
+        <div class="flex items-start gap-4 py-3 px-4 hover:bg-gray-700/50">
+            <div class="flex-1 min-w-0">
+                <p class="text-gray-200 truncate">{{ commit.message }}</p>
+                <p class="text-xs text-gray-500 mt-1">
+                    {% if commit.author %}{{ commit.author }}{% endif %}
+                    {% if commit.author and commit.committed_at %} &middot; {% endif %}
+                    {% if commit.committed_at %}{{ format_relative_time(commit.committed_at) }}{% endif %}
+                </p>
+            </div>
+            {% if github_url %}
+            <a href="{{ github_url }}/commit/{{ commit.sha }}" target="_blank"
+               class="font-mono text-xs text-blue-400 hover:underline flex-shrink-0 pt-0.5">
+                {{ commit.short_sha }}
+            </a>
+            {% else %}
+            <span class="font-mono text-xs text-gray-500 flex-shrink-0 pt-0.5">{{ commit.short_sha }}</span>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
 </div>
 {% endif %}
 
@@ -277,11 +320,21 @@ document.getElementById('search-input').addEventListener('keypress', function(e)
     </div>
 </div>
 
-<!-- Path -->
+<!-- Path & Remote -->
 <div class="mt-8 text-sm text-gray-500">
     <span class="font-medium">Local path:</span>
     <code class="bg-gray-800 px-2 py-1 rounded ml-2">{{ project.path }}</code>
 </div>
+{% if project.git_remote_url %}
+<div class="mt-2 text-sm text-gray-500">
+    <span class="font-medium">Remote:</span>
+    {% if github_url %}
+    <a href="{{ github_url }}" target="_blank" class="text-blue-400 hover:underline ml-2">{{ project.git_remote_url }}</a>
+    {% else %}
+    <code class="bg-gray-800 px-2 py-1 rounded ml-2">{{ project.git_remote_url }}</code>
+    {% endif %}
+</div>
+{% endif %}
 
 <script>
 async function generateFile(type) {

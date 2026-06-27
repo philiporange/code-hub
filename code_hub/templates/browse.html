@@ -58,7 +58,11 @@ function updateSort(value) {
                         {{ project.primary_language }}
                     </span>
                     {% endif %}
-                    {% if project.is_git_repo %}
+                    {% if project.github_name %}
+                    <span class="text-xs text-gray-400 flex-shrink-0" title="{{ project.github_name }}">
+                        <i class="fab fa-github"></i>
+                    </span>
+                    {% elif project.is_git_repo %}
                     <span class="text-xs text-gray-500 flex-shrink-0">git</span>
                     {% endif %}
                 </div>

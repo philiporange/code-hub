@@ -1,10 +1,12 @@
 """FastAPI web server for Code Hub.
 
 Provides web UI and REST API for browsing projects, searching code, generating
-documentation, and managing project scanning. Includes admin functionality for
-initiating scans, bulk-generating missing docs (README, USAGE, METADATA),
-viewing changed projects, and tracking LOC history. Long-running operations
-(scans, bulk generation) run in background threads with live progress via SSE.
+documentation, and managing project scanning. Project views surface the git
+remote address and recent commit history (linked to GitHub) as update info.
+Includes admin functionality for initiating scans, bulk-generating missing docs
+(README, USAGE, METADATA), viewing changed projects, and tracking LOC history.
+Long-running operations (scans, bulk generation) run in background threads with
+live progress via SSE.
 
 Scanning uses DocumentationGenerator.save_to_database() to properly load
 METADATA.json content (descriptions, keywords, modules, frameworks) into the
@@ -33,7 +35,7 @@ from pydantic import BaseModel
 import markdown
 
 from code_hub.models import (
-    Project, Module, ProjectFile, Keyword, ProjectKeyword,
+    Project, Module, ProjectFile, GitCommit, Keyword, ProjectKeyword,
     LOCHistory, ScanLog, db, create_tables
 )
 from code_hub.indexer import get_indexer
@@ -59,6 +61,9 @@ class ProjectResponse(BaseModel):
     is_git_repo: bool = False
     github_name: Optional[str] = None
     github_url: Optional[str] = None
+    git_remote_url: Optional[str] = None
+    default_branch: Optional[str] = None
+    last_commit_at: Optional[str] = None
     file_count: int = 0
     lines_of_code: int = 0
     keywords: List[str] = []
@@ -303,6 +308,12 @@ def project_to_response(project: Project) -> ProjectResponse:
     if project.github_name:
         github_url = f"https://github.com/{project.github_name}"
 
+    # last_commit_at may be a datetime or, for older rows with a timezone offset,
+    # an ISO string. Normalize to a string for the API response.
+    last_commit_at = project.last_commit_at
+    if isinstance(last_commit_at, datetime):
+        last_commit_at = last_commit_at.isoformat()
+
     return ProjectResponse(
         id=project.id,
         name=project.name,
@@ -315,6 +326,9 @@ def project_to_response(project: Project) -> ProjectResponse:
         is_git_repo=project.is_git_repo,
         github_name=project.github_name,
         github_url=github_url,
+        git_remote_url=project.git_remote_url,
+        default_branch=project.default_branch,
+        last_commit_at=last_commit_at,
         file_count=project.file_count,
         lines_of_code=project.lines_of_code,
         keywords=keywords,
@@ -371,6 +385,39 @@ def format_file_size(size_bytes: int) -> str:
             return f"{size_bytes:.1f} {unit}" if unit != 'B' else f"{size_bytes} {unit}"
         size_bytes /= 1024
     return f"{size_bytes:.1f} TB"
+
+
+def format_relative_time(dt) -> str:
+    """Format a datetime as a human-readable relative time (e.g. '3 days ago').
+
+    Accepts a datetime or an ISO-8601 string (older database rows may return the
+    timestamp as a string when it carries a timezone offset).
+    """
+    if not dt:
+        return ""
+    if isinstance(dt, str):
+        try:
+            dt = datetime.fromisoformat(dt)
+        except ValueError:
+            return ""
+    now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+    seconds = max((now - dt).total_seconds(), 0)
+
+    for amount, unit in (
+        (60, "second"),
+        (60, "minute"),
+        (24, "hour"),
+        (7, "day"),
+        (4.345, "week"),
+        (12, "month"),
+    ):
+        if seconds < amount:
+            value = int(seconds)
+            return f"{value} {unit}{'s' if value != 1 else ''} ago" if value else "just now"
+        seconds /= amount
+
+    years = int(seconds)
+    return f"{years} year{'s' if years != 1 else ''} ago"
 
 
 # API Routes
@@ -1575,7 +1622,8 @@ async def home(request: Request):
                 "total_loc": total_loc,
                 "recent_projects": list(recent),
                 "languages": languages,
-                "top_keywords": list(top_keywords)
+                "top_keywords": list(top_keywords),
+                "format_relative_time": format_relative_time
             }
         )
 
@@ -1602,6 +1650,16 @@ async def project_page(request: Request, name: str):
             # Get root directory files for inline file browser
             root_files = await list_project_files(name=name, dir="")
 
+            # Recent commit history (newest first) and GitHub base URL for links
+            commits = list(
+                GitCommit
+                .select()
+                .where(GitCommit.project == project)
+                .order_by(GitCommit.committed_at.desc())
+                .limit(15)
+            )
+            github_url = f"https://github.com/{project.github_name}" if project.github_name else None
+
             # Check if README and USAGE files exist
             project_path = Path(project.path)
             readme_path = project_path / 'README.md'
@@ -1620,7 +1678,10 @@ async def project_page(request: Request, name: str):
                     "languages": project.get_languages(),
                     "frameworks": project.get_frameworks(),
                     "root_files": root_files,
+                    "commits": commits,
+                    "github_url": github_url,
                     "format_file_size": format_file_size,
+                    "format_relative_time": format_relative_time,
                     "has_readme": has_readme,
                     "has_usage": has_usage
                 }

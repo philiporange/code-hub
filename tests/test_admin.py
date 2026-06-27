@@ -9,12 +9,13 @@ import os
 def test_models_import():
     """Test that all models can be imported."""
     from code_hub.models import (
-        Project, Module, ProjectFile, Keyword, ProjectKeyword,
+        Project, Module, ProjectFile, GitCommit, Keyword, ProjectKeyword,
         Dependency, ProjectVector, LOCHistory, ScanLog, ProjectFTS,
         create_tables, drop_tables
     )
     assert LOCHistory is not None
     assert ScanLog is not None
+    assert GitCommit is not None
 
 
 def test_scanner_functions_import():

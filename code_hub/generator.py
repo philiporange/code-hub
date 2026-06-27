@@ -1,8 +1,9 @@
 """Documentation generation orchestrator.
 
 Generates README, METADATA.json, and USAGE documentation for projects using Claude.
-Handles parsing Claude responses, saving files, and updating database records.
-Uses atomic database operations to avoid race conditions during concurrent operations.
+Handles parsing Claude responses, saving files, and updating database records
+(including project files and git commit history). Uses atomic database operations
+to avoid race conditions during concurrent operations.
 """
 import json
 import re
@@ -13,7 +14,7 @@ from dataclasses import dataclass
 import logging
 
 from code_hub.claude_wrapper import ClaudeWrapper, ClaudeResponse
-from code_hub.scanner import ProjectScanner, ScannedProject
+from code_hub.scanner import ProjectScanner, ScannedProject, replace_project_commits
 from code_hub.models import Project, Module, ProjectFile, Keyword, ProjectKeyword, Dependency, db
 from code_hub.config import settings
 
@@ -308,6 +309,9 @@ class DocumentationGenerator:
                     modified_at=file_info.modified_at,
                     language=file_info.language
                 )
+
+            # Save recent commit history
+            replace_project_commits(db_project, project.git.commits)
 
             if metadata:
                 db_project.short_description = metadata.get('short_description', '')
